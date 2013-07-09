@@ -70,7 +70,9 @@ class CANMessage():
 
 class BaseDriver(object):
     def __init__(self, max_in=500, max_out=500, loopback=False):
+        self.total_inbound_count = 0
         self.inbound = Queue.Queue(max_in)
+        self.total_outbound_count = 0
         self.outbound = Queue.Queue(max_out)
         self.loopback = loopback
 
@@ -87,16 +89,20 @@ class BaseDriver(object):
         self.scheduler.add_operation(self.__monitor, 0)
 
     def wait_for_message(self, can_id, timeout=None, ext=True):
-        # Blocking call to wait for a specific message
         pass
+        # Blocking call to wait for a specific message
 
     def add_receive_handler(self, handler, can_id=None, ext=True):
         with self._handle_lock:
             self._receive_handlers[handler] = (can_id, ext)
 
+        return True
+
     def remove_receive_handler(self, handler):
         with self._handle_lock:
             self._receive_handlers.pop(handler)
+
+        return True
 
     def add_cyclic_message(self, message, rate, desc=None):
         with self._msg_lock:
@@ -148,7 +154,7 @@ class BaseDriver(object):
             try:
                 # Attempt to push the message onto the queue
                 self.outbound.put(message, timeout=QUEUE_DELAY)
-
+                self.total_outbound_count += 1
                 # Push the message onto the inbound queue
                 if self.loopback:
                     try:
@@ -173,6 +179,7 @@ class BaseDriver(object):
         try:
             # Check the Queue for a new message, throttled by timeout
             new_msg = self.inbound.get(timeout=QUEUE_DELAY)
+            self.total_inbound_count += 1
         except Queue.Empty:
             # Keep waiting
             return
@@ -181,6 +188,6 @@ class BaseDriver(object):
         for handler, key in self._receive_handlers.items():
             can_id, ext = key
 
-            if new_msg.id == can_id or can_id == None:
+            if new_msg.id == can_id or can_id is None:
                 if new_msg.extended == ext:
                     handler(new_msg)
