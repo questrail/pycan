@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2013 The pycan developers. All rights reserved.
+# Project site: https://github.com/questrail/pycan
+# Use of this source code is governed by a MIT-style license that
+# can be found in the LICENSE.txt file for the project.
+"""Provide base CAN driver functionality.
+
+These base classes provide the common/base CAN functionality that is shared
+among all CAN hardware interfaces.
+"""
 import unittest
 import Queue
 import thread
@@ -6,12 +16,8 @@ import time
 
 QUEUE_DELAY = .005
 
-'''
-TODO List:
-    1) Add Alarm flags
-    2) Add Logger
-
-'''
+# TODO(A. Lewis) Add Alarm flags.
+# TODO(A. Lewis) Add logger.
 
 
 class Operation(threading._Timer):

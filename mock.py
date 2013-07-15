@@ -1,8 +1,17 @@
-'''
+# -*- coding: utf-8 -*-
+# Copyright (c) 2013 The pycan developers. All rights reserved.
+# Project site: https://github.com/questrail/pycan
+# Use of this source code is governed by a MIT-style license that
+# can be found in the LICENSE.txt file for the project.
+"""Fake CAN driver interface
+
+This module extends the BaseDriver class from `basedriver.py` to provide an
+interface to a fake CAN hardware interface.
+
 External Python Dependancies:
 Hardware Requirements:
 Driver Requirements:
-'''
+"""
 
 # Test dependencies
 import time

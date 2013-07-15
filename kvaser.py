@@ -1,8 +1,18 @@
-'''
+# -*- coding: utf-8 -*-
+# Copyright (c) 2013 The pycan developers. All rights reserved.
+# Project site: https://github.com/questrail/pycan
+# Use of this source code is governed by a MIT-style license that
+# can be found in the LICENSE.txt file for the project.
+"""Kvaser USB CAN driver interface
+
+This moduel extends the BaseDriver class from `basedriver.py` to provide an
+interface to the Kvaser CAN USB products.
+
 External Python Dependancies:
 Hardware Requirements:
+    * Kvaser (http://www.kvaser.com/en/products/can/usb.html)
 Driver Requirements:
-'''
+"""
 
 # Test dependencies
 import time

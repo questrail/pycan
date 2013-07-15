@@ -1,4 +1,13 @@
-'''
+# -*- coding: utf-8 -*-
+# Copyright (c) 2013 The pycan developers. All rights reserved.
+# Project site: https://github.com/questrail/pycan
+# Use of this source code is governed by a MIT-style license that
+# can be found in the LICENSE.txt file for the project.
+"""LAWICEL CANUSB CAN driver interface
+
+This moduel extends the BaseDriver class from `basedriver.py` to provide an
+interface to the LAWICEL AB CANUSB CAN module.
+
 External Python Dependancies:
     * pySerial - tested v2.6
 Hardware Requirements:
@@ -6,7 +15,7 @@ Hardware Requirements:
 Driver Requirements:
     * FTDI D2XX Driver / Support
         - See http://www.can232.com/docs/canusb_drinst_d2xx.pdf
-'''
+"""
 
 # Test dependencies
 import time
