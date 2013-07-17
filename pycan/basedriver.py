@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2013 The pycan developers. All rights reserved.
+# Project site: https://github.com/questrail/pycan
+# Use of this source code is governed by a MIT-style license that
+# can be found in the LICENSE.txt file for the project.
+"""Provide base CAN driver functionality.
+
+These base classes provide the common/base CAN functionality that is shared
+among all CAN hardware interfaces.
+"""
 import unittest
 import Queue
 import thread
@@ -6,12 +16,8 @@ import time
 
 QUEUE_DELAY = .005
 
-'''
-TODO List:
-    1) Add Alarm flags
-    2) Add Logger
-
-'''
+# TODO(A. Lewis) Add Alarm flags.
+# TODO(A. Lewis) Add logger.
 
 
 class Operation(threading._Timer):
@@ -57,7 +63,17 @@ class Manager(object):
 
 
 class CANMessage():
+    """Models the CAN message
+
+    Attributes:
+        id:
+        dlc:
+        payload:
+        extended: A boolean indicating if TBD
+        ts: An integer representing the time stamp
+    """
     def __init__(self, id, dlc, payload, extended=True, ts=0):
+        """Inits CANMesagge."""
         self.id = id
         self.dlc = dlc
         self.payload = payload
@@ -70,6 +86,7 @@ class CANMessage():
 
 class BaseDriver(object):
     def __init__(self, max_in=500, max_out=500, loopback=False):
+        """Inits BaseDriver."""
         self.total_inbound_count = 0
         self.inbound = Queue.Queue(max_in)
         self.total_outbound_count = 0
