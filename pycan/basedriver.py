@@ -63,7 +63,17 @@ class Manager(object):
 
 
 class CANMessage():
+    """Models the CAN message
+
+    Attributes:
+        id:
+        dlc:
+        payload:
+        extended: A boolean indicating if TBD
+        ts: An integer representing the time stamp
+    """
     def __init__(self, id, dlc, payload, extended=True, ts=0):
+        """Inits CANMesagge."""
         self.id = id
         self.dlc = dlc
         self.payload = payload
@@ -76,6 +86,7 @@ class CANMessage():
 
 class BaseDriver(object):
     def __init__(self, max_in=500, max_out=500, loopback=False):
+        """Inits BaseDriver."""
         self.total_inbound_count = 0
         self.inbound = Queue.Queue(max_in)
         self.total_outbound_count = 0
