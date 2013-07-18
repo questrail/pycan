@@ -10,7 +10,6 @@ among all CAN hardware interfaces.
 """
 import unittest
 import Queue
-import thread
 import threading
 import time
 
@@ -165,19 +164,16 @@ class BaseDriver(object):
                 return False
 
     def shutdown(self):
-        self.scheduler.stop()
         self._running.clear()
-
-    def __send_cyclic(self, id_to_use):
-        self.send(self._cyclic_messages[id_to_use])
 
     def __cyclic_monitor(self):
         while self._running.is_set():
             time.sleep(self._cyclic_fastest_rate/3.0)
             for cyclic in self._cyclic_messages.values():
-                if time.time() > cyclic.next_run:
-                    self.send(cyclic.msg)
-                    cyclic.determine_next_run()
+                if cyclic.active:
+                    if time.time() > cyclic.next_run:
+                        self.send(cyclic.msg)
+                        cyclic.determine_next_run()
 
     def __inbound_monitor(self):
         while self._running.is_set():

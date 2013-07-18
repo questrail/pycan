@@ -5,7 +5,7 @@
 # can be found in the LICENSE.txt file for the project.
 """LAWICEL CANUSB CAN driver interface
 
-This moduel extends the BaseDriver class from `basedriver.py` to provide an
+This moduel extends the pycan.BaseDriver class from `basedriver.py` to provide an
 interface to the LAWICEL AB CANUSB CAN module.
 
 External Python Dependancies:
@@ -20,13 +20,16 @@ Driver Requirements:
 # Test dependencies
 import time
 import unittest
-import threading
 
 # Driver dependencies
 import re
+import threading
 import Queue
-from basedriver import *
+import basedriver as pycan
 import serial
+
+QUEUE_DELAY = 1
+
 
 CAN_TX_TIMEOUT = 100 # ms
 CAN_RX_TIMEOUT = 100 # ms
@@ -50,7 +53,7 @@ OPEN_CMD = 'O\r'
 CLOSE_CMD = 'C\r'
 TIME_STAMP_CMD = 'Z1\r'
 
-class CANUSB(BaseDriver):
+class CANUSB(pycan.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(CANUSB, self).__init__(max_in=500, max_out=500, loopback=False)
@@ -58,7 +61,7 @@ class CANUSB(BaseDriver):
         # Open the COM port
         port = kwargs['com_port'] # Throws key error
         baud = kwargs.get('com_baud', 115200)
-        self.port = serial.Serial(port=port, baudrate=baud, timeout=.5)
+        self.port = serial.Serial(port=port, baudrate=baud, timeout=1)
         self.rx_buffer = ''
         self.response = ''
 
@@ -76,77 +79,76 @@ class CANUSB(BaseDriver):
         # Set the default paramters
         self.update_bus_parameters()
 
-        # Add the inbound and outbound processes to the BaseDriver's scheduler
-        self.scheduler.add_operation(self.__process_outbound_queue, 0)
-        self.scheduler.add_operation(self.__process_inbound_queue, 0)
-
         # Go on bus
         self.bus_on()
 
+        self._running = threading.Event()
+        self._running.set()
+        self.ob_t = threading.Thread(target=self.__process_outbound_queue)
+        self.ob_t.daemon = True
+        self.ob_t.start()
+
+        self.ib_t = threading.Thread(target=self.__process_inbound_queue)
+        self.ib_t.daemon = True
+        self.ib_t.start()
+
     def bus_on(self):
-        return (self.__send_command(OPEN_CMD) == '\r')
+        return self.__send_command(OPEN_CMD)
 
     def bus_off(self):
-       return (self.__send_command(CLOSE_CMD) == '\r')
+       return self.__send_command(CLOSE_CMD)
 
     def __send_command(self, cmd, timeout=COMMAND_TIMEOUT):
-        # Clear the response buffer
-        self.response = ''
+        # Due to the CANUSB driver not sending confirmation during moderate
+        # bus loads, waiting for any amount of will likely be useless.
 
         # Send the command
-        self.port.write(cmd)
+        bytes_sent = self.port.write(cmd)
+        return (bytes_sent == len(cmd))
 
-        # Wait for a response
-        tic = time.time()
-        while (time.time() - tic) < timeout :
-            if self.response:
-                return self.response
-            #time.sleep(.000001)
-
-        return ''
 
     def update_bus_parameters(self, **kwargs):
         # Default values are setup for a 250k connetion
         br = kwargs.get('bit_rate', '250K')
         br_cmd = BIT_RATE_CMD.get(br, None)
         if br_cmd:
-            return (self.__send_command(br_cmd) == '\r')
+            return self.__send_command(br_cmd)
 
         return False
 
     def __process_outbound_queue(self):
-        try:
-            # Read the Queue - allow the timeout to throttle the thread
-            can_msg = self.outbound.get(timeout=QUEUE_DELAY)
-        except Queue.Empty:
-            # Kick out and wait for the next call from the scheduler
-            return
+        while self._running.is_set():
+            try:
+                # Read the Queue - allow the timeout to throttle the thread
+                can_msg = self.outbound.get(timeout=QUEUE_DELAY)
+            except Queue.Empty:
+                continue
 
-        outbound_msg = ''
-        if can_msg.extended:
-            id_str = "T%08X" % (can_msg.id)
-            ack = 'Z\r'
-        else:
-            id_str = "t%03X" % (can_msg.id & 0x7FF)
-            ack = 'z\r'
+            outbound_msg = ''
+            if can_msg.extended:
+                id_str = "T%08X" % (can_msg.id & 0x1FFFFFFF)
+                ack = 'Z\r'
+            else:
+                id_str = "t%03X" % (can_msg.id & 0x7FF)
+                ack = 'z\r'
 
-        outbound_msg += id_str
-        outbound_msg += "%X" % (can_msg.dlc)
+            outbound_msg += id_str
+            outbound_msg += "%X" % (can_msg.dlc)
 
-        for x in range(can_msg.dlc):
-            outbound_msg += "%02X" % (can_msg.payload[x])
+            for x in range(can_msg.dlc):
+                outbound_msg += "%02X" % (can_msg.payload[x])
 
-        outbound_msg += "\r"
+            outbound_msg += "\r"
 
-        resp = self.__send_command(outbound_msg)
-        #if resp != ack:
-        #    print resp
+            resp = self.__send_command(outbound_msg)
+            #if resp != ack:
+            #    print resp
 
-        return (resp == ack)
+            #return (resp == ack)
 
     def __process_inbound_queue(self):
-        # Grab all of the data from the serial port
-        try:
+        while self._running.is_set():
+            # Grab all of the data from the serial port
             bytes_to_read = self.port.inWaiting()
             if bytes_to_read > 0:
                 self.rx_buffer += self.port.read(bytes_to_read)
@@ -154,69 +156,73 @@ class CANUSB(BaseDriver):
                 # Read one -- uses the serial port timeout for throttling
                 self.rx_buffer += self.port.read()
 
-        except serial.SerialException:
-            pass
+            msg = ''
+            for term in TERMINATORS:
+                # Look for the 1st command
+                if term in self.rx_buffer:
+                    idx = self.rx_buffer.find(term) + 1
 
-        msg = ''
-        for term in TERMINATORS:
-            # Look for the 1st command
-            if term in self.rx_buffer:
-                idx = self.rx_buffer.find(term) + 1
+                    if idx:
+                        # Get the message and remove it from the buffer
+                        msg = self.rx_buffer[:idx]
+                        self.rx_buffer = self.rx_buffer[idx:]
+                        break
 
-                if idx:
-                    # Get the message and remove it from the buffer
-                    msg = self.rx_buffer[:idx]
-                    self.rx_buffer = self.rx_buffer[idx:]
-                    break
+            if msg:
+                hdr = msg[0]
 
-        if msg:
-            hdr = msg[0]
+                if hdr in STD_MSG_HEADERS:
+                    try:
+                        if hdr == 'T': # 29 bit message
+                            e_id = 9 # ending can_id index
+                            ext = True
+                        else: # hdr == 't' # 11 bit message
+                            e_id = 4
+                            ext = False
 
-            if hdr in STD_MSG_HEADERS:
-                if hdr == 'T': # 29 bit message
-                    e_id = 9 # ending can_id index
-                    ext = True
-                else: # hdr == 't' # 11 bit message
-                    e_id = 4
-                    ext = False
-                # Get the CAN ID
-                can_id = int(msg[1:e_id], 16)
+                        # Get the CAN ID
+                        can_id = int(msg[1:e_id], 16)
 
-                # Get the DLC (data length)
-                s_dlc = e_id
-                e_dlc = s_dlc + 1
-                dlc = int(msg[s_dlc:e_dlc])
+                        # Get the DLC (data length)
+                        s_dlc = e_id
+                        e_dlc = s_dlc + 1
+                        dlc = int(msg[s_dlc:e_dlc])
 
-                # Get the payload
-                s_payload = e_dlc
-                e_payload = s_payload + dlc*2
-                payload = []
-                for x in range(s_payload, e_payload ,2):
-                    val = int(msg[x:x+2],16)
-                    payload.append(val)
+                        # Get the payload
+                        s_payload = e_dlc
+                        e_payload = s_payload + dlc*2
+                        payload = []
+                        for x in range(s_payload, e_payload ,2):
+                            val = int(msg[x:x+2],16)
+                            payload.append(val)
 
-                # Get the timestamp (if any)
-                timestamp = 0
-                if len(msg[e_payload:-1]) == 4:
-                    timestamp = int(msg[e_payload+1:-1], 16)
+                        # Get the timestamp (if any)
+                        timestamp = 0
+                        if len(msg[e_payload:-1]) == 4:
+                            timestamp = int(msg[e_payload+1:-1], 16)
 
-                # Build the message
-                new_msg = CANMessage(can_id, dlc, payload, ext, timestamp)
+                        # Build the message
+                        new_msg = pycan.CANMessage(can_id, dlc, payload, ext, timestamp)
 
-                try: # Push the message into the inbound queue
-                    self.inbound.put(new_msg, timeout=QUEUE_DELAY)
-                except Queue.Full:
-                    # TODO: flag error
-                    pass
+                        try: # Push the message into the inbound queue
+                            self.inbound.put(new_msg, timeout=QUEUE_DELAY)
+                        except Queue.Full:
+                            # TODO: flag error
+                            pass
 
-            elif hdr in REM_MSG_HEADERS:
-                pass # Not supported
-            else:
-                # Unknown type --> assume it's a command response
-                self.response = msg
+                    except IndexError:
+                        # TODO (A. Lewis) Log the bad message from the comport
+                        # Chuck partial messages
+                        pass
+
+                elif hdr in REM_MSG_HEADERS:
+                    pass # Not supported
+                else:
+                    # Unknown type --> assume it's a command response
+                    self.response = msg
 
 class CANUSBTests(unittest.TestCase):
-    KNOWN_ID_ON_BUS = 0x0C010605
+    KNOWN_ID_ON_BUS = 0x0CF0031C
     TEST_PORT = '/dev/tty.usbserial-LWVU30AO'
     def setUp(self):
         self.driver = None
@@ -231,21 +237,21 @@ class CANUSBTests(unittest.TestCase):
 
     def testTransmit(self):
         self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
+        msg1 = pycan.CANMessage(0x123456, 3, [1,2,3], False)
         # Watch the CAN bus to ensure the message was sent
         self.assertTrue(self.driver.send(msg1))
 
     def testCyclicTransmit(self):
         self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = CANMessage(0x18F00503, 8, [0x7D, 0xFF, 0xFF, 0x7D, 0xFF, 0xFF, 0xFF, 0xFF], True)
-        msg2 = CANMessage(0x18F00503, 8, [0x7D, 0xFF, 0xFF, 0x7D, 0xFF, 0xFF, 0xFF, 0xFF], False)
+        msg1 = pycan.CANMessage(0x18F00503, 8, [0x7D, 0xFF, 0xFF, 0x7D, 0xFF, 0xFF, 0xFF, 0xFF], False)
+        msg2 = pycan.CANMessage(0x18F00503, 8, [0x00, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0xFF], False)
 
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
-        time.sleep(3) # Watch the CAN bus to ensure the messages are being sent
+        time.sleep(5) # Watch the CAN bus to ensure the messages are being sent
         self.assertTrue(self.driver.update_cyclic_message(msg2, "Sample"))
-        time.sleep(3) # Watch the CAN bus to ensure the messages changed and are being sent
+        time.sleep(5) # Watch the CAN bus to ensure the messages changed and are being sent
         self.assertTrue(self.driver.update_cyclic_message(msg1, "Sample"))
-        time.sleep(3)
+        time.sleep(5)
 
     def testGenericReceive(self):
         required_rx_count = 10
