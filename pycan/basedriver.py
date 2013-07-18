@@ -14,62 +14,21 @@ import thread
 import threading
 import time
 
-QUEUE_DELAY = .005
+QUEUE_DELAY = 1
 
 # TODO(A. Lewis) Add Alarm flags.
 # TODO(A. Lewis) Add logger.
+# TODO(A. Lewis) Look into removing the datalengh from the CAN message init
 
 
-class Operation(threading._Timer):
-    def __init__(self, *args, **kwargs):
-        threading._Timer.__init__(self, *args, **kwargs)
-        self.setDaemon(True)
-
-    def run(self):
-        while True:
-            self.finished.clear()
-            self.finished.wait(self.interval)
-            if not self.finished.isSet():
-                self.function(*self.args, **self.kwargs)
-            else:
-                return
-            self.finished.set()
-
-
-class Manager(object):
-    ops = {}
-
-    def add_operation(self, operation, interval, args=[], kwargs={}):
-        op = Operation(interval, operation, args, kwargs)
-        new_id = thread.start_new_thread(op.run, ())
-        self.ops[new_id] = op
-        return new_id
-
-    def stop(self, op_id=None):
-        if op_id is None:
-            # Stop them all
-            for op_id, op in self.ops.items():
-                op.cancel()
-                while op.isAlive():
-                    time.sleep(.05)
-
-            self.ops.clear()
-        else:
-            if op_id in self.ops:
-                op = self.ops.pop(op_id)
-                op.cancel()
-                while op.isAlive():
-                    time.sleep(.05)
-
-
-class CANMessage():
+class CANMessage(object):
     """Models the CAN message
 
     Attributes:
-        id:
-        dlc:
+        id: An integer representing the raw CAN id
+        dlc: An integer representing the total data length of the message
         payload:
-        extended: A boolean indicating if TBD
+        extended: A boolean indicating if the message is a 29 bit message
         ts: An integer representing the time stamp
     """
     def __init__(self, id, dlc, payload, extended=True, ts=0):
@@ -82,6 +41,26 @@ class CANMessage():
 
     def __str__(self):
         return "%s,%d : %s" % (hex(self.id), self.dlc, str(self.payload))
+
+
+class CyclicMessage(object):
+    """Wraps the CAN message model to hold timing information
+
+    Attributes:
+        msg: The CANMessage to be sent
+        rate: A float representing the expected transmission rate (seconds)
+    """
+    def __init__(self, msg, rate):
+        self.msg = msg
+        self.rate = rate
+        self.next_run = time.time() + rate  # Now
+        self.active = True
+
+    def determine_next_run(self):
+        if self.active:
+            self.next_run = time.time() + self.rate
+        else:
+            self.next_run = None
 
 
 class BaseDriver(object):
@@ -97,13 +76,18 @@ class BaseDriver(object):
         self._handle_lock = threading.Lock()
         self._receive_handlers = {}
         self._running = threading.Event()
+        self._running.set()
 
         self._cyclic_messages = {}
-        self._cyclic_rates = {}
-        self._cyclic_events = {}
+        self._cyclic_fastest_rate = 1.0
 
-        self.scheduler = Manager()
-        self.scheduler.add_operation(self.__monitor, 0)
+        self._cyclic_thread = threading.Thread(target=self.__cyclic_monitor)
+        self._cyclic_thread.daemon = True
+        self._cyclic_thread.start()
+
+        self._inbound_thread = threading.Thread(target=self.__inbound_monitor)
+        self._inbound_thread.daemon = True
+        self._inbound_thread.start()
 
     def wait_for_message(self, can_id, timeout=None, ext=True):
         pass
@@ -128,13 +112,11 @@ class BaseDriver(object):
 
             try:
                 # Update / Add new messages
-                self._cyclic_messages[desc] = message
-                self._cyclic_rates[desc] = rate
-                event = self.scheduler.add_operation(self.__send_cyclic,
-                                                     self._cyclic_rates[desc],
-                                                     [desc])
+                self._cyclic_messages[desc] = CyclicMessage(message, rate)
 
-                self._cyclic_events[desc] = event
+                # Determine the CPU delay based off of fasest rate
+                if rate < self._cyclic_fastest_rate:
+                    self._cyclic_fastest_rate = rate
 
                 return True
             except:
@@ -148,7 +130,7 @@ class BaseDriver(object):
             # Ensure the message exsits
             if desc in self._cyclic_messages:
                 # Update message
-                self._cyclic_messages[desc] = message
+                self._cyclic_messages[desc].msg = message
 
                 return True
             else:
@@ -157,11 +139,7 @@ class BaseDriver(object):
     def stop_cyclic_message(self, desc):
         with self._msg_lock:
             if desc in self._cyclic_messages:
-                scheduled_event = self._cyclic_events.pop(desc)
-                self.scheduler.stop(scheduled_event)
-
-                self._cyclic_messages.pop(desc)
-                self._cyclic_rates.pop(desc)
+                self._cyclic_messages[desc].active = False
                 return True
             else:
                 return False
@@ -172,14 +150,14 @@ class BaseDriver(object):
                 # Attempt to push the message onto the queue
                 self.outbound.put(message, timeout=QUEUE_DELAY)
                 self.total_outbound_count += 1
+
                 # Push the message onto the inbound queue
                 if self.loopback:
                     try:
                         self.inbound.put(message, timeout=QUEUE_DELAY)
                     except Queue.Full:
-                        # TODO: Should this report a true failure?
+                        # TODO: Add a log message showing the loopback failed
                         return False
-                        pass
 
                 return True
 
@@ -188,23 +166,33 @@ class BaseDriver(object):
 
     def shutdown(self):
         self.scheduler.stop()
+        self._running.clear()
 
     def __send_cyclic(self, id_to_use):
         self.send(self._cyclic_messages[id_to_use])
 
-    def __monitor(self):
-        try:
-            # Check the Queue for a new message, throttled by timeout
-            new_msg = self.inbound.get(timeout=QUEUE_DELAY)
-            self.total_inbound_count += 1
-        except Queue.Empty:
-            # Keep waiting
-            return
+    def __cyclic_monitor(self):
+        while self._running.is_set():
+            time.sleep(self._cyclic_fastest_rate/3.0)
+            for cyclic in self._cyclic_messages.values():
+                if time.time() > cyclic.next_run:
+                    self.send(cyclic.msg)
+                    cyclic.determine_next_run()
 
-        # Inform the ID specific handlers
-        for handler, key in self._receive_handlers.items():
-            can_id, ext = key
+    def __inbound_monitor(self):
+        while self._running.is_set():
+            try:
+                # Check the Queue for a new message, throttled by timeout
+                new_msg = self.inbound.get(timeout=QUEUE_DELAY)
+                self.total_inbound_count += 1
+            except Queue.Empty:
+                # Keep waiting
+                continue
 
-            if new_msg.id == can_id or can_id is None:
-                if new_msg.extended == ext:
-                    handler(new_msg)
+            # Inform the ID specific handlers
+            for handler, key in self._receive_handlers.items():
+                can_id, ext = key
+
+                if new_msg.id == can_id or can_id is None:
+                    if new_msg.extended == ext:
+                        handler(new_msg)
