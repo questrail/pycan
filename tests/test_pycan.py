@@ -6,6 +6,7 @@
 import os
 import unittest
 from pycan.basedriver import *
+from pycan import CANMessage
 
 def measure_performance(driver, rate, run_time=3.0):
     expected_counts = run_time / rate
@@ -22,7 +23,6 @@ def measure_performance(driver, rate, run_time=3.0):
     ret = (max(t_stats)*1000.0, min(t_stats)*1000.0, (sum(t_stats) / float(len(t_stats))) * 1000.0)
     print "\nTarget:%1.1f (ms)\nMax %1.1f\nMin %1.1f\nAvg %1.1f" % (rate*1000.0, ret[0], ret[1], ret[2])
     return ret
-
 
 class CANDriverTests(unittest.TestCase):
     def setUp(self):
@@ -43,7 +43,7 @@ class CANDriverTests(unittest.TestCase):
             self.fail(msg="PEP8 not installed.")
 
         # Check the CAN driver
-        basedriver = os.path.abspath('basedriver.py')
+        basedriver = os.path.abspath('pycan/basedriver.py')
         pep8_checker = pep8.Checker(basedriver)
         violation_count = pep8_checker.check_all()
         error_message = "PEP8 violations found: %d" % (violation_count)
@@ -177,67 +177,15 @@ class CANDriverTests(unittest.TestCase):
 
     def testCyclicPerformance_1000ms(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-
-        msg1 = CANMessage(1, 1, [1])
-
-        # Add and start some cyclic messages
-        rate = 1
-        self.assertTrue(self.driver.add_cyclic_message(msg1, rate), msg="Unable to add cyclic message")
-
-        max_t, min_t, avg_t = measure_performance(self.driver, rate, 10.0)
-
-        uTarget = (rate * 1.02) * 1000.0
-        lTarget = (rate * 0.98) * 1000.0
-        self.assertTrue(lTarget < avg_t < uTarget, msg="Avg time (%1.1f) expected to be between %1.1f and %1.1f" % (avg_t, uTarget, lTarget))
-
-        target = (rate * 1.05) * 1000.0
-        self.assertTrue(max_t < target, msg="Max time (%1.1f) expected to be less than %1.1f" % (max_t, target))
-
-        target = (rate * 0.95) * 1000.0
-        self.assertTrue(max_t < target, msg="Min time (%1.1f) expected to be greater than %1.1f" % (min_t, target))
+        self.__performance_test(self.driver, 1, 10.0, [1.75, 1.00, 1.5])
 
     def testCyclicPerformance_100ms(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-
-        msg1 = CANMessage(1, 1, [1])
-
-        # Add and start some cyclic messages
-        rate = .1
-        self.assertTrue(self.driver.add_cyclic_message(msg1, rate), msg="Unable to add cyclic message")
-
-        max_t, min_t, avg_t = measure_performance(self.driver, rate, 2.0)
-
-        uTarget = (rate * 1.02) * 1000.0
-        lTarget = (rate * 0.98) * 1000.0
-        self.assertTrue(lTarget < avg_t < uTarget, msg="Avg time (%1.1f) expected to be between %1.1f and %1.1f" % (avg_t, uTarget, lTarget))
-
-        target = (rate * 1.05) * 1000.0
-        self.assertTrue(max_t < target, msg="Max time (%1.1f) expected to be less than %1.1f" % (max_t, target))
-
-        target = (rate * 0.95) * 1000.0
-        self.assertTrue(max_t < target, msg="Min time (%1.1f) expected to be greater than %1.1f" % (min_t, target))
-
+        self.__performance_test(self.driver, .1, 5.0, [1.00, .1, .175])
 
     def testCyclicPerformance_10ms(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-
-        msg1 = CANMessage(1, 1, [1])
-
-        # Add and start some cyclic messages
-        rate = .01
-        self.assertTrue(self.driver.add_cyclic_message(msg1, rate), msg="Unable to add cyclic message")
-
-        max_t, min_t, avg_t = measure_performance(self.driver, rate, 2.0)
-
-        uTarget = (rate * 1.02) * 1000.0
-        lTarget = (rate * 0.98) * 1000.0
-        self.assertTrue(lTarget < avg_t < uTarget, msg="Avg time (%1.1f) expected to be between %1.1f and %1.1f" % (avg_t, uTarget, lTarget))
-
-        target = (rate * 1.05) * 1000.0
-        self.assertTrue(max_t < target, msg="Max time (%1.1f) expected to be less than %1.1f" % (max_t, target))
-
-        target = (rate * 0.95) * 1000.0
-        self.assertTrue(max_t < target, msg="Min time (%1.1f) expected to be greater than %1.1f" % (min_t, target))
+        self.__performance_test(self.driver, .01, 5.0, [.5, .01, .075])
 
 
     def testCyclicAdd(self):
@@ -252,11 +200,10 @@ class CANDriverTests(unittest.TestCase):
 
         time.sleep(1) # allow time for the cyclic messages to send
         qsize = self.driver.total_outbound_count
-        self.assertTrue(qsize > 17, msg="Q Size: %d" % qsize)
+        self.assertTrue(qsize > 10, msg="Q Size: %d" % qsize)
 
         self.assertTrue(self.driver.stop_cyclic_message(msg1.id), msg="Unable to stop cyclic message")
         self.assertTrue(self.driver.stop_cyclic_message("ETC2"), msg="Unable to stop cyclic message")
-        time.sleep(2)
 
     def testCyclicOperation(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=True)
@@ -293,12 +240,15 @@ class CANDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Message 1"), msg="Unable to add cyclic message")
         self.assertTrue(self.driver.add_cyclic_message(msg2, .1, "Message 2"), msg="Unable to add cyclic message")
 
-        time.sleep(.5) # allow time for the cyclic messages to send
+        # Wait for the cyclic messages to send
+        msg1_evt.wait(5.0)
+        msg2_evt.wait(5.0)
 
         # Update message 2 payload
         self.assertTrue(self.driver.update_cyclic_message(msg3, "Message 2"), msg="Unable to update cyclic message")
 
-        time.sleep(.5) # allow time for the cyclic messages to send
+        # Wait for the cyclic messages to send
+        msg3_evt.wait(5.0)
 
         # Ensure messages were sent out
         self.assertTrue(msg1_evt.isSet(), msg="Message 1 not received")
@@ -308,8 +258,26 @@ class CANDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.stop_cyclic_message("Message 1"), msg="Unable to stop cyclic message")
         self.assertTrue(self.driver.stop_cyclic_message("Message 2"), msg="Unable to stop cyclic message")
 
-        # Allow some time for the cyclic message to shut down
-        time.sleep(2)
+    def __performance_test(self, driver, rate, run_time, tolerances):
+        # Determine the upper and lower bounds based on the tolerance in seconds
+        uTarget, lTarget, aTarget = tolerances
+
+        # Scale the seconds to miliseconds
+        uTarget *= 1000.0
+        lTarget *= 1000.0
+        aTarget *= 1000.0
+
+        msg1 = CANMessage(1, 1, [1])
+
+        # Add and start some cyclic messages
+        self.assertTrue(self.driver.add_cyclic_message(msg1, rate), msg="Unable to add cyclic message")
+
+        max_t, min_t, avg_t = measure_performance(driver, rate, run_time)
+
+        self.assertTrue(lTarget < avg_t < uTarget, msg="Avg time (%1.1f) expected to be between %1.1f and %1.1f" % (avg_t, uTarget, lTarget))
+        self.assertTrue(max_t < uTarget, msg="Max time (%1.1f) expected to be less than %1.1f" % (max_t, uTarget))
+        self.assertTrue(min_t > lTarget, msg="Min time (%1.1f) expected to be greater than %1.1f" % (min_t, lTarget))
+
 
 if __name__ == '__main__':
     suite = unittest.TestLoader().loadTestsFromTestCase(CANDriverTests)

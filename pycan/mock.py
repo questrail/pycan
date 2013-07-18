@@ -5,7 +5,7 @@
 # can be found in the LICENSE.txt file for the project.
 """Fake CAN driver interface
 
-This module extends the BaseDriver class from `basedriver.py` to provide an
+This module extends the basedriver.BaseDriver class from `basedriver.py` to provide an
 interface to a fake CAN hardware interface.
 
 External Python Dependancies:
@@ -16,13 +16,16 @@ Driver Requirements:
 # Test dependencies
 import time
 import unittest
-import threading
 
 # Driver dependencies
 import Queue
-from basedriver import *
+import threading
+import basedriver
+from __init__ import CANMessage
 
-class CANDriver(BaseDriver):
+QUEUE_DELAY = 1
+
+class CANDriver(basedriver.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(CANDriver, self).__init__(kwargs.get("max_in", 500),
@@ -30,13 +33,15 @@ class CANDriver(BaseDriver):
                                      kwargs.get("loopback", False))
 
         self.verbose = kwargs.get("verbose", False)
+
         self.inbound_index = 0
         self.known_msgs = []
         self.__generate_known_messages()
 
-        # Add the inbound and outbound processes to the BaseDriver's scheduler
-        self.scheduler.add_operation(self.__process_outbound_queue, 0)
-        self.scheduler.add_operation(self.__process_inbound_queue, 0)
+        self._running = threading.Event()
+        self._running.set()
+        self.ob_t = self.start_daemon(self.__process_outbound_queue)
+        self.ib_t = self.start_daemon(self.__process_inbound_queue)
 
     def __generate_known_messages(self):
         # Create 8 CAN messages
@@ -44,28 +49,29 @@ class CANDriver(BaseDriver):
             self.known_msgs.append(CANMessage(x, x, range(0,x)))
 
     def __process_outbound_queue(self):
-        try:
-            # Read the Queue - allow the timeout to throttle the thread
-            can_msg = self.outbound.get(timeout=QUEUE_DELAY)
-        except Queue.Empty:
-            # Kick out and wait for the next call from the scheduler
-            return
+        while self._running.is_set():
+            try:
+                # Read the Queue - allow the timeout to throttle the thread
+                can_msg = self.outbound.get(timeout=QUEUE_DELAY)
+            except Queue.Empty:
+                continue
 
-        if self.verbose:
-            print can_msg
+            if self.verbose:
+                print "\n", can_msg
 
     def __process_inbound_queue(self):
-        # Generate some known CAN traffic
-        time.sleep(self.known_msgs[self.inbound_index].id * .01)
+        while self._running.is_set():
+            # Generate some known CAN traffic
+            time.sleep(self.known_msgs[self.inbound_index].id * .01)
 
-        try: # Push the message into the inbound queue
-            self.inbound.put(self.known_msgs[self.inbound_index], timeout=QUEUE_DELAY)
-        except Queue.Full:
-            # TODO: flag error
-            pass
+            try: # Push the message into the inbound queue
+                self.inbound.put(self.known_msgs[self.inbound_index])
+            except Queue.Full:
+                # TODO (A. Lewis) Add logging warning
+                pass
 
-        self.inbound_index += 1
-        self.inbound_index = self.inbound_index % 8
+            self.inbound_index += 1
+            self.inbound_index = self.inbound_index % 8
 
 class MockTests(unittest.TestCase):
     KNOWN_ID_ON_BUS = 0x8
@@ -103,7 +109,6 @@ class MockTests(unittest.TestCase):
             events[-1].clear()
 
         self.driver = CANDriver()
-        print ''
 
         def gen_handler(msg):
             # Walk down the number of events marking them as
@@ -111,7 +116,7 @@ class MockTests(unittest.TestCase):
             for event in events:
                 if not event.isSet():
                     event.set()
-                    print msg
+                    print "\n", msg
                     break;
 
         self.driver.add_receive_handler(gen_handler)
@@ -134,7 +139,6 @@ class MockTests(unittest.TestCase):
             events[-1].clear()
 
         self.driver = CANDriver()
-        print ''
 
         def msg_handler(msg):
             # Walk down the number of events marking them as
