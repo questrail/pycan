@@ -5,7 +5,7 @@
 # can be found in the LICENSE.txt file for the project.
 """Kvaser USB CAN driver interface
 
-This moduel extends the BaseDriver class from `basedriver.py` to provide an
+This moduel extends the basedriver.BaseDriver class from `basedriver.py` to provide an
 interface to the Kvaser CAN USB products.
 
 External Python Dependancies:
@@ -21,13 +21,16 @@ import threading
 
 # Driver dependencies
 import Queue
-from basedriver import *
+import basedriver
+from __init__ import CANMessage
 from ctypes import *
 
 CAN_TX_TIMEOUT = 100 # ms
 CAN_RX_TIMEOUT = 100 # ms
+QUEUE_DELAY = 1 # second
 
-class KvaserDriver(BaseDriver):
+
+class KvaserDriver(basedriver.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(KvaserDriver, self).__init__(max_in=500, max_out=500, loopback=False)
@@ -47,9 +50,10 @@ class KvaserDriver(BaseDriver):
         # Set the default paramters
         self.update_bus_parameters()
 
-        # Add the inbound and outbound processes to the BaseDriver's scheduler
-        self.scheduler.add_operation(self.__process_outbound_queue, 0)
-        self.scheduler.add_operation(self.__process_inbound_queue, 0)
+        self._running = threading.Event()
+        self._running.set()
+        self.ob_t = self.start_daemon(self.__process_outbound_queue)
+        self.ib_t = self.start_daemon(self.__process_inbound_queue)
 
     def update_bus_parameters(self, **kwargs):
         # Default values are setup for a 250k connetion with a 75% sample point
@@ -63,60 +67,62 @@ class KvaserDriver(BaseDriver):
                                 c_uint(0))
 
     def __process_outbound_queue(self):
-        try:
-            # Read the Queue - allow the timeout to throttle the thread
-            can_msg = self.outbound.get(timeout=QUEUE_DELAY)
-        except Queue.Empty:
-            # Kick out and wait for the next call from the scheduler
-            return
+        while self._running.is_set():
+            try:
+                # Read the Queue - allow the timeout to throttle the thread
+                can_msg = self.outbound.get(timeout=QUEUE_DELAY)
+            except Queue.Empty:
+                # Kick out and wait for the next call from the scheduler
+                continue
 
-        tx_data = (c_uint8 * can_msg.dlc)()
-        for x in range(can_msg.dlc):
-            tx_data[x] = can_msg.payload[x]
+            tx_data = (c_uint8 * can_msg.dlc)()
+            for x in range(can_msg.dlc):
+                tx_data[x] = can_msg.payload[x]
 
-        if can_msg.extended: ext = 4
-        else: ext = 2
+            if can_msg.extended: ext = 4
+            else: ext = 2
 
-        status = windll.canlib32.canWriteWait( c_int(self._can_channel),
-                                      c_uint32(can_msg.id),
-                                      pointer(tx_data),
-                                      c_int(can_msg.dlc),# dlc
-                                      c_int(ext),        # ext
-                                      c_uint32(CAN_TX_TIMEOUT))
+            status = windll.canlib32.canWriteWait( c_int(self._can_channel),
+                                          c_uint32(can_msg.id),
+                                          pointer(tx_data),
+                                          c_int(can_msg.dlc),# dlc
+                                          c_int(ext),        # ext
+                                          c_uint32(CAN_TX_TIMEOUT))
         # TODO: Flag error status
 
     def __process_inbound_queue(self):
-        rx_id = c_uint(0)
-        rx_dlc = c_uint(0)
-        rx_flags = c_uint(0)
-        rx_time = c_uint(0)
-        rx_msg = (c_uint8 * 8)()
+        while self._running.is_set():
+            rx_id = c_uint(0)
+            rx_dlc = c_uint(0)
+            rx_flags = c_uint(0)
+            rx_time = c_uint(0)
+            rx_msg = (c_uint8 * 8)()
 
-        status = windll.canlib32.canReadWait( c_int(self._can_channel),
-                                     pointer(rx_id),
-                                     pointer(rx_msg),
-                                     pointer(rx_dlc),
-                                     pointer(rx_flags),
-                                     pointer(rx_time),
-                                     c_uint32(CAN_RX_TIMEOUT))
+            status = windll.canlib32.canReadWait( c_int(self._can_channel),
+                                         pointer(rx_id),
+                                         pointer(rx_msg),
+                                         pointer(rx_dlc),
+                                         pointer(rx_flags),
+                                         pointer(rx_time),
+                                         c_uint32(CAN_RX_TIMEOUT))
 
-        if status < 0:
-            pass
-            #TODO: Flag error
-
-        else:
-            # Build the message
-            new_msg = CANMessage(rx_id.value, rx_dlc.value, rx_msg)
-
-            try: # Push the message into the inbound queue
-                self.inbound.put(new_msg, timeout=QUEUE_DELAY)
-            except Queue.Full:
-                # TODO: flag error
+            if status < 0:
                 pass
+                #TODO: Flag error
+
+            else:
+                # Build the message
+                new_msg = CANMessage(rx_id.value, rx_dlc.value, rx_msg)
+
+                try: # Push the message into the inbound queue
+                    self.inbound.put(new_msg, timeout=QUEUE_DELAY)
+                except Queue.Full:
+                    # TODO: flag error
+                    pass
 
 
 class KvaserTests(unittest.TestCase):
-    KNOWN_ID_ON_BUS = 0x18F00506
+    KNOWN_ID_ON_BUS = 0x0CF0031C
     def setUp(self):
         self.driver = None
 
@@ -135,13 +141,15 @@ class KvaserTests(unittest.TestCase):
 
     def testCyclicTransmit(self):
         self.driver = KvaserDriver()
-        msg1 = CANMessage(0x123456, 3, [1,2,3])
-        msg2 = CANMessage(0x123456, 4, [5,6,7,8])
+        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
+        msg2 = CANMessage(0x123456, 4, [5,6,7,8], False)
 
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
-        time.sleep(3) # Watch the CAN bus to ensure the messages are being sent
+        time.sleep(5) # Watch the CAN bus to ensure the messages are being sent
         self.assertTrue(self.driver.update_cyclic_message(msg2, "Sample"))
-        time.sleep(3) # Watch the CAN bus to ensure the messages changed and are being sent
+        time.sleep(5) # Watch the CAN bus to ensure the messages changed and are being sent
+        self.assertTrue(self.driver.update_cyclic_message(msg1, "Sample"))
+        time.sleep(5) # Watch the CAN bus to ensure the messages changed and are being sent
 
     def testGenericReceive(self):
         required_rx_count = 10
@@ -193,7 +201,7 @@ class KvaserTests(unittest.TestCase):
                     print msg
                     break;
 
-        # This test relies on using a known message on the bus.  IE: It may need
+        # This test relies on using a known message on the bus.  IE: It will need
         # to be tweaked later
         # TODO: Look into using a message from a generic handler to pick a random one
         self.driver.add_receive_handler(msg_handler, self.KNOWN_ID_ON_BUS)

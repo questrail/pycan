@@ -5,7 +5,7 @@
 # can be found in the LICENSE.txt file for the project.
 """LAWICEL CANUSB CAN driver interface
 
-This moduel extends the pycan.BaseDriver class from `basedriver.py` to provide an
+This moduel extends the basedriver.BaseDriver class from `basedriver.py` to provide an
 interface to the LAWICEL AB CANUSB CAN module.
 
 External Python Dependancies:
@@ -25,7 +25,8 @@ import unittest
 import re
 import threading
 import Queue
-import basedriver as pycan
+import basedriver
+from __init__ import CANMessage
 import serial
 
 QUEUE_DELAY = 1
@@ -53,7 +54,7 @@ OPEN_CMD = 'O\r'
 CLOSE_CMD = 'C\r'
 TIME_STAMP_CMD = 'Z1\r'
 
-class CANUSB(pycan.BaseDriver):
+class CANUSB(basedriver.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(CANUSB, self).__init__(max_in=500, max_out=500, loopback=False)
@@ -84,13 +85,8 @@ class CANUSB(pycan.BaseDriver):
 
         self._running = threading.Event()
         self._running.set()
-        self.ob_t = threading.Thread(target=self.__process_outbound_queue)
-        self.ob_t.daemon = True
-        self.ob_t.start()
-
-        self.ib_t = threading.Thread(target=self.__process_inbound_queue)
-        self.ib_t.daemon = True
-        self.ib_t.start()
+        self.ob_t = self.start_daemon(self.__process_outbound_queue)
+        self.ib_t = self.start_daemon(self.__process_inbound_queue)
 
     def bus_on(self):
         return self.__send_command(OPEN_CMD)
@@ -202,7 +198,7 @@ class CANUSB(pycan.BaseDriver):
                             timestamp = int(msg[e_payload+1:-1], 16)
 
                         # Build the message
-                        new_msg = pycan.CANMessage(can_id, dlc, payload, ext, timestamp)
+                        new_msg = CANMessage(can_id, dlc, payload, ext, timestamp)
 
                         try: # Push the message into the inbound queue
                             self.inbound.put(new_msg, timeout=QUEUE_DELAY)
@@ -237,14 +233,14 @@ class CANUSBTests(unittest.TestCase):
 
     def testTransmit(self):
         self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = pycan.CANMessage(0x123456, 3, [1,2,3], False)
+        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
         # Watch the CAN bus to ensure the message was sent
         self.assertTrue(self.driver.send(msg1))
 
     def testCyclicTransmit(self):
         self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = pycan.CANMessage(0x18F00503, 8, [0x7D, 0xFF, 0xFF, 0x7D, 0xFF, 0xFF, 0xFF, 0xFF], False)
-        msg2 = pycan.CANMessage(0x18F00503, 8, [0x00, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0xFF], False)
+        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
+        msg2 = CANMessage(0x123456, 4, [5,6,7,8], False)
 
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
         time.sleep(5) # Watch the CAN bus to ensure the messages are being sent

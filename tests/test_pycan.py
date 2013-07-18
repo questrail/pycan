@@ -6,6 +6,7 @@
 import os
 import unittest
 from pycan.basedriver import *
+from pycan import CANMessage
 
 def measure_performance(driver, rate, run_time=3.0):
     expected_counts = run_time / rate

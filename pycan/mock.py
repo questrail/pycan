@@ -5,7 +5,7 @@
 # can be found in the LICENSE.txt file for the project.
 """Fake CAN driver interface
 
-This module extends the pycan.BaseDriver class from `basedriver.py` to provide an
+This module extends the basedriver.BaseDriver class from `basedriver.py` to provide an
 interface to a fake CAN hardware interface.
 
 External Python Dependancies:
@@ -20,11 +20,12 @@ import unittest
 # Driver dependencies
 import Queue
 import threading
-import basedriver as pycan
+import basedriver
+from __init__ import CANMessage
 
 QUEUE_DELAY = 1
 
-class CANDriver(pycan.BaseDriver):
+class CANDriver(basedriver.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(CANDriver, self).__init__(kwargs.get("max_in", 500),
@@ -32,25 +33,20 @@ class CANDriver(pycan.BaseDriver):
                                      kwargs.get("loopback", False))
 
         self.verbose = kwargs.get("verbose", False)
-        self._running = threading.Event()
-        self._running.set()
 
         self.inbound_index = 0
         self.known_msgs = []
         self.__generate_known_messages()
 
-        self.ob_t = threading.Thread(target=self.__process_outbound_queue)
-        self.ob_t.daemon = True
-        self.ob_t.start()
-
-        self.ib_t = threading.Thread(target=self.__process_inbound_queue)
-        self.ib_t.daemon = True
-        self.ib_t.start()
+        self._running = threading.Event()
+        self._running.set()
+        self.ob_t = self.start_daemon(self.__process_outbound_queue)
+        self.ib_t = self.start_daemon(self.__process_inbound_queue)
 
     def __generate_known_messages(self):
         # Create 8 CAN messages
         for x in range(1,9):
-            self.known_msgs.append(pycan.CANMessage(x, x, range(0,x)))
+            self.known_msgs.append(CANMessage(x, x, range(0,x)))
 
     def __process_outbound_queue(self):
         while self._running.is_set():
@@ -91,14 +87,14 @@ class MockTests(unittest.TestCase):
 
     def testTransmit(self):
         self.driver = CANDriver(verbose=True)
-        msg1 = pycan.CANMessage(0x123456, 3, [1,2,3])
+        msg1 = CANMessage(0x123456, 3, [1,2,3])
         # Watch the CAN bus to ensure the message was sent
         self.assertTrue(self.driver.send(msg1))
 
     def testCyclicTransmit(self):
         self.driver = CANDriver(verbose=True)
-        msg1 = pycan.CANMessage(0x123456, 3, [1,2,3])
-        msg2 = pycan.CANMessage(0x123456, 4, [5,6,7,8])
+        msg1 = CANMessage(0x123456, 3, [1,2,3])
+        msg2 = CANMessage(0x123456, 4, [5,6,7,8])
 
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
         time.sleep(3) # Watch the CAN bus to ensure the messages are being sent

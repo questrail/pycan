@@ -17,29 +17,6 @@ QUEUE_DELAY = 1
 
 # TODO(A. Lewis) Add Alarm flags.
 # TODO(A. Lewis) Add logger.
-# TODO(A. Lewis) Look into removing the datalengh from the CAN message init
-
-
-class CANMessage(object):
-    """Models the CAN message
-
-    Attributes:
-        id: An integer representing the raw CAN id
-        dlc: An integer representing the total data length of the message
-        payload:
-        extended: A boolean indicating if the message is a 29 bit message
-        ts: An integer representing the time stamp
-    """
-    def __init__(self, id, dlc, payload, extended=True, ts=0):
-        """Inits CANMesagge."""
-        self.id = id
-        self.dlc = dlc
-        self.payload = payload
-        self.extended = extended
-        self.time_stamp = ts
-
-    def __str__(self):
-        return "%s,%d : %s" % (hex(self.id), self.dlc, str(self.payload))
 
 
 class CyclicMessage(object):
@@ -80,13 +57,14 @@ class BaseDriver(object):
         self._cyclic_messages = {}
         self._cyclic_fastest_rate = 1.0
 
-        self._cyclic_thread = threading.Thread(target=self.__cyclic_monitor)
-        self._cyclic_thread.daemon = True
-        self._cyclic_thread.start()
+        self._cyclic_thread = self.start_daemon(self.__cyclic_monitor)
+        self._inbound_thread = self.start_daemon(self.__inbound_monitor)
 
-        self._inbound_thread = threading.Thread(target=self.__inbound_monitor)
-        self._inbound_thread.daemon = True
-        self._inbound_thread.start()
+    def start_daemon(self, process):
+        t = threading.Thread(target=process)
+        t.daemon = True
+        t.start()
+        return t
 
     def wait_for_message(self, can_id, timeout=None, ext=True):
         pass
