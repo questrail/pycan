@@ -8,11 +8,11 @@ import time
 import threading
 import unittest
 import ConfigParser
-import pycan.canusb
+import pycan.kvaser
 from pycan.common import CANMessage
 
 
-class CANUSBTests(unittest.TestCase):
+class KvaserTests(unittest.TestCase):
     def tearDown(self):
         try:
             self.driver.bus_off()
@@ -27,7 +27,6 @@ class CANUSBTests(unittest.TestCase):
         config.read(os.path.join(test_path, 'test.cfg'))
 
         self.known_can_id = int(config.get('COMMON', 'Known_ID_On_Bus'), 16)
-        self.com_port = config.get('CANUSB', 'Comm_Port')
 
     def testPEP8Compliance(self):
         # Ensure PEP8 is installed
@@ -37,8 +36,8 @@ class CANUSBTests(unittest.TestCase):
             self.fail(msg="PEP8 not installed.")
 
         # Check the CAN driver
-        driver_path = os.path.dirname(pycan.canusb.__file__)
-        driver_file = os.path.abspath(os.path.join(driver_path, 'canusb.py'))
+        driver_path = os.path.dirname(pycan.kvaser.__file__)
+        driver_file = os.path.abspath(os.path.join(driver_path, 'kvaser.py'))
         pep8_checker = pep8.Checker(driver_file)
         violation_count = pep8_checker.check_all()
         error_message = "PEP8 violations found: %d" % (violation_count)
@@ -49,7 +48,7 @@ class CANUSBTests(unittest.TestCase):
         self.__load_test_config()
 
         # Setup the driver
-        self.driver = pycan.canusb.CANUSB(com_port=self.com_port)
+        self.driver = pycan.kvaser.Kvaser()
 
         # Run the driver specific tests if and only if the driver was setup
         self.Transmit()
@@ -130,7 +129,3 @@ class CANUSBTests(unittest.TestCase):
             msg="Expected %d, receved %d" % (expected, actual)
             self.assertTrue(event.isSet(), msg)
             actual += 1
-
-if __name__ == '__main__':
-    suite = unittest.TestLoader().loadTestsFromTestCase(CANUSBTests)
-    unittest.TextTestRunner(verbosity=2).run(suite)
