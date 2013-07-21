@@ -8,10 +8,9 @@
 These base classes provide the common/base CAN functionality that is shared
 among all CAN hardware interfaces.
 """
-import unittest
+import time
 import Queue
 import threading
-import time
 
 QUEUE_DELAY = 1
 
@@ -67,8 +66,8 @@ class BaseDriver(object):
         return t
 
     def wait_for_message(self, can_id, timeout=None, ext=True):
-        pass
         # Blocking call to wait for a specific message
+        raise NotImplementedError
 
     def add_receive_handler(self, handler, can_id=None, ext=True):
         with self._handle_lock:
