@@ -6,12 +6,15 @@
 """Kvaser USB CAN driver interface
 
 This moduel extends the basedriver.BaseDriver class from `basedriver.py`
-to provide an interface to the Kvaser CAN USB products.
+to provide an interface to the Kvaser CAN USB products.  Note this has
+only been tested using a Kvaser Leaf Lite
 
-External Python Dependancies:
+Operating System:
+    * Windows XP +
 Hardware Requirements:
     * Kvaser (http://www.kvaser.com/en/products/can/usb.html)
 Driver Requirements:
+    * See Kvaser's website for the latest
 """
 
 import Queue
