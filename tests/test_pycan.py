@@ -6,7 +6,7 @@
 import os
 import unittest
 from pycan.basedriver import *
-from pycan import CANMessage
+from pycan.common import CANMessage
 
 def measure_performance(driver, rate, run_time=3.0):
     expected_counts = run_time / rate
@@ -70,8 +70,8 @@ class CANDriverTests(unittest.TestCase):
     def testMessageQueues(self):
         self.driver = BaseDriver(max_in=2, max_out=2, loopback=False)
 
-        msg1 = CANMessage(0x123, 2, [1,2])
-        msg2 = CANMessage(0x1234, 3, [1,2,3])
+        msg1 = CANMessage(0x123, [1,2])
+        msg2 = CANMessage(0x1234, [1,2,3])
 
         self.assertTrue(self.driver.send(msg1))
         self.assertTrue(self.driver.send(msg2))
@@ -87,8 +87,8 @@ class CANDriverTests(unittest.TestCase):
     def testMessageLoopback(self):
         self.driver = BaseDriver(max_in=5, max_out=2, loopback=True)
 
-        msg1 = CANMessage(0x123, 2, [1,2])
-        msg2 = CANMessage(0x1234, 3, [1,2,3])
+        msg1 = CANMessage(0x123, [1,2])
+        msg2 = CANMessage(0x1234, [1,2,3])
 
         self.assertTrue(self.driver.send(msg1))
         self.assertTrue(self.driver.send(msg2))
@@ -109,12 +109,12 @@ class CANDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.total_inbound_count == 2,
                         msg="Loopback still placed the message in the outbound: %d" % self.driver.total_inbound_count)
 
-    def testQueueMonitor(self):
+    def testReceiveHandlers(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
 
-        msg1 = CANMessage(0x123, 2, [1,2])
-        msg2 = CANMessage(0x1234, 3, [1,2,3])
-        msg3 = CANMessage(0x12345, 4, [1,2,3,4])
+        msg1 = CANMessage(0x123, [1,2])
+        msg2 = CANMessage(0x1234, [1,2,3])
+        msg3 = CANMessage(0x12345, [1,2,3,4])
 
         spec_event1 = threading.Event()
         spec_event1.clear()
@@ -177,7 +177,7 @@ class CANDriverTests(unittest.TestCase):
 
     def testCyclicPerformance_1000ms(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-        self.__performance_test(self.driver, 1, 10.0, [1.75, 1.00, 1.5])
+        self.__performance_test(self.driver, 1, 5.0, [1.75, 1.00, 1.5])
 
     def testCyclicPerformance_100ms(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
@@ -191,8 +191,8 @@ class CANDriverTests(unittest.TestCase):
     def testCyclicAdd(self):
         self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
 
-        msg1 = CANMessage(1, 1, [1])
-        msg2 = CANMessage(2, 2, [2])
+        msg1 = CANMessage(1, [1])
+        msg2 = CANMessage(2, [1,2])
 
         # Add and start some cyclic messages
         self.assertTrue(self.driver.add_cyclic_message(msg1, .1), msg="Unable to add cyclic message")
@@ -218,9 +218,9 @@ class CANDriverTests(unittest.TestCase):
         msg3_evt.clear()
 
 
-        msg1 = CANMessage(1, 1, [1])
-        msg2 = CANMessage(2, 2, [1,2])
-        msg3 = CANMessage(2, 2, [3,4])
+        msg1 = CANMessage(1, [1])
+        msg2 = CANMessage(2, [1,2])
+        msg3 = CANMessage(2, [3,4])
 
         def msg1_handler(message):
             if msg1 is message:
@@ -267,7 +267,7 @@ class CANDriverTests(unittest.TestCase):
         lTarget *= 1000.0
         aTarget *= 1000.0
 
-        msg1 = CANMessage(1, 1, [1])
+        msg1 = CANMessage(1, [1])
 
         # Add and start some cyclic messages
         self.assertTrue(self.driver.add_cyclic_message(msg1, rate), msg="Unable to add cyclic message")

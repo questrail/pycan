@@ -5,11 +5,11 @@
 # can be found in the LICENSE.txt file for the project.
 """LAWICEL CANUSB CAN driver interface
 
-This moduel extends the basedriver.BaseDriver class from `basedriver.py` to provide an
-interface to the LAWICEL AB CANUSB CAN module.
+This moduel extends the basedriver.BaseDriver class from `basedriver.py`
+to provide an interface to the LAWICEL AB CANUSB CAN module.
 
-External Python Dependancies:
-    * pySerial - tested v2.6
+Operating System:
+    * Independant
 Hardware Requirements:
     * CANUSB (http://www.can232.com)
 Driver Requirements:
@@ -17,24 +17,18 @@ Driver Requirements:
         - See http://www.can232.com/docs/canusb_drinst_d2xx.pdf
 """
 
-# Test dependencies
-import time
-import unittest
-
-# Driver dependencies
-import re
 import threading
 import Queue
 import basedriver
-from __init__ import CANMessage
+from common import CANMessage
 import serial
 
 QUEUE_DELAY = 1
 
 
-CAN_TX_TIMEOUT = 100 # ms
-CAN_RX_TIMEOUT = 100 # ms
-COMMAND_TIMEOUT = 1 # seconds
+CAN_TX_TIMEOUT = 100  # ms
+CAN_RX_TIMEOUT = 100  # ms
+COMMAND_TIMEOUT = 1.0  # seconds
 TERMINATORS = ['\r', '\x07']
 STD_MSG_HEADERS = ['t', 'T']
 REM_MSG_HEADERS = ['r', 'R']
@@ -54,13 +48,14 @@ OPEN_CMD = 'O\r'
 CLOSE_CMD = 'C\r'
 TIME_STAMP_CMD = 'Z1\r'
 
+
 class CANUSB(basedriver.BaseDriver):
     def __init__(self, **kwargs):
         # Init the base driver
         super(CANUSB, self).__init__(max_in=500, max_out=500, loopback=False)
 
         # Open the COM port
-        port = kwargs['com_port'] # Throws key error
+        port = kwargs['com_port']  # Throws key error
         baud = kwargs.get('com_baud', 115200)
         self.port = serial.Serial(port=port, baudrate=baud, timeout=1)
         self.rx_buffer = ''
@@ -92,7 +87,7 @@ class CANUSB(basedriver.BaseDriver):
         return self.__send_command(OPEN_CMD)
 
     def bus_off(self):
-       return self.__send_command(CLOSE_CMD)
+        return self.__send_command(CLOSE_CMD)
 
     def __send_command(self, cmd, timeout=COMMAND_TIMEOUT):
         # Due to the CANUSB driver not sending confirmation during moderate
@@ -101,7 +96,6 @@ class CANUSB(basedriver.BaseDriver):
         # Send the command
         bytes_sent = self.port.write(cmd)
         return (bytes_sent == len(cmd))
-
 
     def update_bus_parameters(self, **kwargs):
         # Default values are setup for a 250k connetion
@@ -136,11 +130,7 @@ class CANUSB(basedriver.BaseDriver):
 
             outbound_msg += "\r"
 
-            resp = self.__send_command(outbound_msg)
-            #if resp != ack:
-            #    print resp
-
-            #return (resp == ack)
+            self.__send_command(outbound_msg)
 
     def __process_inbound_queue(self):
         while self._running.is_set():
@@ -149,7 +139,7 @@ class CANUSB(basedriver.BaseDriver):
             if bytes_to_read > 0:
                 self.rx_buffer += self.port.read(bytes_to_read)
             else:
-                # Read one -- uses the serial port timeout for throttling
+                # Read one: this uses the serial port timeout for throttling
                 self.rx_buffer += self.port.read()
 
             msg = ''
@@ -169,10 +159,10 @@ class CANUSB(basedriver.BaseDriver):
 
                 if hdr in STD_MSG_HEADERS:
                     try:
-                        if hdr == 'T': # 29 bit message
-                            e_id = 9 # ending can_id index
+                        if hdr == 'T':  # 29 bit message
+                            e_id = 9  # ending can_id index
                             ext = True
-                        else: # hdr == 't' # 11 bit message
+                        else:  # hdr == 't' # 11 bit message
                             e_id = 4
                             ext = False
 
@@ -188,8 +178,8 @@ class CANUSB(basedriver.BaseDriver):
                         s_payload = e_dlc
                         e_payload = s_payload + dlc*2
                         payload = []
-                        for x in range(s_payload, e_payload ,2):
-                            val = int(msg[x:x+2],16)
+                        for x in range(s_payload, e_payload, 2):
+                            val = int(msg[x:x+2], 16)
                             payload.append(val)
 
                         # Get the timestamp (if any)
@@ -198,9 +188,9 @@ class CANUSB(basedriver.BaseDriver):
                             timestamp = int(msg[e_payload+1:-1], 16)
 
                         # Build the message
-                        new_msg = CANMessage(can_id, dlc, payload, ext, timestamp)
+                        new_msg = CANMessage(can_id, payload, ext, timestamp)
 
-                        try: # Push the message into the inbound queue
+                        try:
                             self.inbound.put(new_msg, timeout=QUEUE_DELAY)
                         except Queue.Full:
                             # TODO: flag error
@@ -212,112 +202,8 @@ class CANUSB(basedriver.BaseDriver):
                         pass
 
                 elif hdr in REM_MSG_HEADERS:
-                    pass # Not supported
+                    pass  # Not supported
                 else:
                     # Unknown type --> assume it's a command response
+                    # TODO: Log an alarm on any <BELL> responses found
                     self.response = msg
-
-class CANUSBTests(unittest.TestCase):
-    KNOWN_ID_ON_BUS = 0x0CF0031C
-    TEST_PORT = '/dev/tty.usbserial-LWVU30AO'
-    def setUp(self):
-        self.driver = None
-
-    def tearDown(self):
-        try:
-            self.driver.bus_off()
-            self.driver.shutdown()
-            time.sleep(2)
-        except:
-            pass
-
-    def testTransmit(self):
-        self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
-        # Watch the CAN bus to ensure the message was sent
-        self.assertTrue(self.driver.send(msg1))
-
-    def testCyclicTransmit(self):
-        self.driver = CANUSB(com_port=self.TEST_PORT)
-        msg1 = CANMessage(0x123456, 3, [1,2,3], False)
-        msg2 = CANMessage(0x123456, 4, [5,6,7,8], False)
-
-        self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
-        time.sleep(5) # Watch the CAN bus to ensure the messages are being sent
-        self.assertTrue(self.driver.update_cyclic_message(msg2, "Sample"))
-        time.sleep(5) # Watch the CAN bus to ensure the messages changed and are being sent
-        self.assertTrue(self.driver.update_cyclic_message(msg1, "Sample"))
-        time.sleep(5)
-
-    def testGenericReceive(self):
-        required_rx_count = 10
-        events = []
-        for x in range(required_rx_count):
-            events.append(threading.Event())
-            events[-1].clear()
-
-        self.driver = CANUSB(com_port=self.TEST_PORT)
-        print ''
-
-        def gen_handler(msg):
-            # Walk down the number of events marking them as
-            # each new message is received
-            for event in events:
-                if not event.isSet():
-                    event.set()
-                    print msg
-                    break;
-
-        self.driver.add_receive_handler(gen_handler)
-
-        for event in events:
-            event.wait(1)# wait for at least 1 second for each message
-
-        # Determine how many messages were in fact recorded
-        rx_cnt = 0
-        for event in events:
-            if event.isSet():
-                rx_cnt += 1
-        self.assertEqual(rx_cnt, required_rx_count,
-            msg="Expected %d messages, receved %d messages" % (required_rx_count, rx_cnt))
-
-    def testSpecificReceive(self):
-        required_rx_count = 10
-        events = []
-        for x in range(required_rx_count):
-            events.append(threading.Event())
-            events[-1].clear()
-
-        self.driver = CANUSB(com_port=self.TEST_PORT)
-        print ''
-
-        def msg_handler(msg):
-            # Walk down the number of events marking them as
-            # each new message is received
-            for event in events:
-                if not event.isSet():
-                    event.set()
-                    print msg
-                    break;
-
-        # This test relies on using a known message on the bus.  IE: It may need
-        # to be tweaked later
-        # TODO: Look into using a message from a generic handler to pick a random one
-        self.driver.add_receive_handler(msg_handler, self.KNOWN_ID_ON_BUS)
-
-        # Wait for all of the messages to arrive
-        for event in events:
-            event.wait(1)# wait for at least 1 second for each message
-
-        # Determine how many messages were in fact recorded
-        rx_cnt = 0
-        for event in events:
-            if event.isSet():
-                rx_cnt += 1
-        self.assertEqual(rx_cnt, required_rx_count,
-            msg="Expected %d messages, receved %d messages" % (required_rx_count, rx_cnt))
-
-if __name__ == '__main__':
-    suite = unittest.TestLoader().loadTestsFromTestCase(CANUSBTests)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
