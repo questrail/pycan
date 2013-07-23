@@ -32,6 +32,9 @@ class ASCParser(object):
     def parse_line(self, line):
         self.next_message = None
 
+        # Compress all of the white space
+        line = ' '.join(line.split())
+
         # Split the line prior to parsing
         split_line = line.strip(' ').split(' ')
 
@@ -42,6 +45,11 @@ class ASCParser(object):
         for word in DIRTY_WORDS:
             if word in split_line:
                 return self.next_message
+
+
+        # Check that the line has all the common line items
+        if len(split_line) < 5:
+            return self.next_message
 
         # Determine and remove the common line items
         ts = float(split_line.pop(0))
@@ -68,8 +76,16 @@ class ASCParser(object):
 
             can_id = int(can_id, self.settings['base'])
 
+            # Determine if the message should be excluded from the trace
+            msg = CANMessage(can_id, payload, ext)
+
+            for ef in self.exclude_filters:
+                if ef.filter_match(msg):
+                    msg = None
+                    break
+
             # Build the real CAN message
-            self.next_message = CANMessage(can_id, payload, ext)
+            self.next_message = msg
 
         # Determine how long to delay (applies to data and remote frames)
         delay = self.__determine_delay(ts)
@@ -95,6 +111,8 @@ class ASCParser(object):
             # can actually put messages on the wire
             delay = MIN_DELAY
 
+        return delay
+
     def __apply_delay(self, delay):
         if delay:
             evt = threading.Event()
@@ -104,7 +122,7 @@ class ASCParser(object):
         keyword = 'base'
         if keyword in split_line:
             idx = split_line.index(keyword)
-            if split_line[idx + 1] is 'hex':
+            if split_line[idx + 1].strip().lower() == 'hex':
                 self.settings[keyword] = 16
             else:
                 self.settings[keyword] = 10
@@ -112,7 +130,7 @@ class ASCParser(object):
         keyword = 'timestamps'
         if keyword in split_line:
             idx = split_line.index(keyword)
-            if split_line[idx + 1] is ABS:
+            if split_line[idx + 1].strip().lower() == ABS:
                 self.settings[keyword] = ABS
             else:
                 self.settings[keyword] = DELTA

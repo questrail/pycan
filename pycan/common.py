@@ -10,8 +10,7 @@ class CANMessage(object):
 
     Attributes:
         id: An integer representing the raw CAN id
-        dlc: An integer representing the total data length of the message
-        payload:
+        payload: Message payload to be transmitted
         extended: A boolean indicating if the message is a 29 bit message
         ts: An integer representing the time stamp
     """
@@ -25,6 +24,36 @@ class CANMessage(object):
 
     def __str__(self):
         return "%s,%d : %s" % (hex(self.id), self.dlc, str(self.payload))
+
+
+class IDMaskFilter(object):
+    """CAN ID Mask Filter
+
+    Attributes:
+        mask: An integer representing the bit fields required to match
+        code: An integer representing the id to apply the mask against
+        extended: A boolean indicating if the message is a 29 bit message
+    """
+    def __init__(self, mask, code, extended=True):
+        """Inits Mask Filter."""
+        self.mask = mask
+        self.code = code
+        self.extended = extended
+
+    def filter_match(self, msg):
+        """Tests if the given CAN message should pass through the filter"""
+        # Check the extended bit
+        if msg.extended != self.extended:
+            return False
+
+        # Check the mask / code combo
+        target = self.mask & self.code
+        if (msg.id & self.mask) == target:
+            return True
+        else:
+            return False
+
+
 
 
 

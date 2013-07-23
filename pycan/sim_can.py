@@ -52,6 +52,7 @@ class SimCAN(basedriver.BaseDriver):
         while self._running.is_set():
             try:
                 can_msg = self.outbound.get(timeout=QUEUE_DELAY)
+                time.sleep(.0005)
             except Queue.Empty:
                 continue
 

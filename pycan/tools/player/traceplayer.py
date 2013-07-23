@@ -66,7 +66,7 @@ class TracePlayer(object):
                 self.state = self.PLAYING
             else:
                 self.paused.set()
-                self.state = self.PAUSE
+                self.state = self.PAUSED
 
     def __file_player(self):
         while not self.shutdown.is_set():
@@ -78,7 +78,7 @@ class TracePlayer(object):
                 continue
 
             # We should be playing the given files
-            with files_lock:
+            with self.files_lock:
                 for f in self.files:
                     # Don't start the next file if we are stopped
                     if not self.playing.is_set():
@@ -90,19 +90,19 @@ class TracePlayer(object):
                         with open(f, 'r') as fid:
                             for line in fid:
                                 # Support real time pausing
-                                while self.paused_is_set():
+                                while self.paused.is_set():
                                     time.sleep(.5)
 
                                 # Check to see if we should still be running
                                 if self.playing.is_set():
                                     # Do something special with the line
-                                    self.__process_line()
+                                    self.__process_line(line)
                                 else:
                                     # Bail out
                                     break
                     except IOError:
                         # TODO: Useing logging
-                        print "Error running file: {f}".format(f)
+                        print "Error running file: {f}".format(f=f)
 
     def __process_line(self, line):
         # Note the order of the calls (send then parse) allows the
@@ -111,7 +111,9 @@ class TracePlayer(object):
 
         # Send the next available message
         if self.next_message:
-            self.driver.send(self.next_message)
+            # Keep trying to send the message (do not throw any away)
+            while(not self.driver.send(self.next_message)):
+                time.sleep(.001)
 
         # Parse the line and wait
         self.next_message = self.parser.parse_line(line)
