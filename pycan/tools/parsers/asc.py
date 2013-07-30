@@ -15,7 +15,7 @@ from pycan.common import CANMessage
 DIRTY_WORDS = ['Statistic:', 'date', 'base', 'events', 'version']
 ABS = 'absolute'
 DELTA = 'deltas'
-MIN_DELAY = .0001
+MIN_DELAY = 0
 
 
 class ASCParser(object):
