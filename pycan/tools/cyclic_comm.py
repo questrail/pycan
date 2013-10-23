@@ -3,16 +3,18 @@
 # Project site: https://github.com/questrail/pycan
 # Use of this source code is governed by a MIT-style license that
 # can be found in the LICENSE.txt file for the project.
-"""Provide base CAN driver functionality.
+"""Provide cyclic transmit and receive functionality.
 
-These base classes provide the common/base CAN functionality that is shared
-among all CAN hardware interfaces.
+The cyclic communcation modlue is designed to add an additional
+layer of functionality on top of the generic CAN drivers.
+These additional features include cyclic transmissions as well
+as generic receive handlers.  In general this should be the
+base communication module for CAN device simulators
 """
 import time
 import Queue
 import threading
-
-QUEUE_DELAY = 1
+import collections
 
 # TODO(A. Lewis) Add Alarm flags.
 # TODO(A. Lewis) Add logger.
@@ -38,18 +40,14 @@ class CyclicMessage(object):
             self.next_run = None
 
 
-class BaseDriver(object):
-    def __init__(self, max_in=500, max_out=500, loopback=False):
-        """Inits BaseDriver."""
-        self.total_inbound_count = 0
-        self.inbound = Queue.Queue(max_in)
-        self.total_outbound_count = 0
-        self.outbound = Queue.Queue(max_out)
-        self.loopback = loopback
+class CyclicComm(object):
+    def __init__(self, driver):
+        """Inits CyclicComm."""
+        self.driver = driver
 
         self._msg_lock = threading.Lock()
         self._handle_lock = threading.Lock()
-        self._receive_handlers = {}
+        self._receive_handlers = collections.deque()
         self._running = threading.Event()
         self._running.set()
 
@@ -65,19 +63,9 @@ class BaseDriver(object):
         t.start()
         return t
 
-    def wait_for_message(self, can_id, timeout=None, ext=True):
-        # Blocking call to wait for a specific message
-        raise NotImplementedError
-
     def add_receive_handler(self, handler, can_id=None, ext=True):
         with self._handle_lock:
-            self._receive_handlers[handler] = (can_id, ext)
-
-        return True
-
-    def remove_receive_handler(self, handler):
-        with self._handle_lock:
-            self._receive_handlers.pop(handler)
+            self._receive_handlers.append((can_id, ext, handler))
 
         return True
 
@@ -122,30 +110,15 @@ class BaseDriver(object):
 
     def send(self, message):
         with self._msg_lock:
-            try:
-                # Attempt to push the message onto the queue
-                self.outbound.put(message, timeout=QUEUE_DELAY)
-                self.total_outbound_count += 1
-
-                # Push the message onto the inbound queue
-                if self.loopback:
-                    try:
-                        self.inbound.put(message, timeout=QUEUE_DELAY)
-                    except Queue.Full:
-                        # TODO: Add a log message showing the loopback failed
-                        return False
-
-                return True
-
-            except Queue.Full:
-                return False
+            return self.driver.send(message)
 
     def shutdown(self):
         self._running.clear()
 
+    # TODO: Add a multi-step timer (sleep > 20ms, then busy loop)
     def __cyclic_monitor(self):
         while self._running.is_set():
-            time.sleep(self._cyclic_fastest_rate/3.0)
+            time.sleep(self._cyclic_fastest_rate/5.0)
             for cyclic in self._cyclic_messages.values():
                 if cyclic.active:
                     if time.time() > cyclic.next_run:
@@ -154,18 +127,13 @@ class BaseDriver(object):
 
     def __inbound_monitor(self):
         while self._running.is_set():
-            try:
-                # Check the Queue for a new message, throttled by timeout
-                new_msg = self.inbound.get(timeout=QUEUE_DELAY)
-                self.total_inbound_count += 1
-            except Queue.Empty:
-                # Keep waiting
-                continue
+            # Check the Queue for a new message, throttled by driver
+            new_msg = self.driver.next_message(timeout=1)
 
             # Inform the ID specific handlers
-            for handler, key in self._receive_handlers.items():
-                can_id, ext = key
+            for can_id, ext, handler in self._receive_handlers:
 
                 if new_msg.id == can_id or can_id is None:
                     if new_msg.extended == ext:
                         handler(new_msg)
+

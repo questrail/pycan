@@ -23,7 +23,7 @@ class CANMessage(object):
         self.time_stamp = ts
 
     def __str__(self):
-        return "%s,%d : %s" % (hex(self.id), self.dlc, str(self.payload))
+        return "%s,%d : %s" % (hex(self.id), self.dlc, [hex(x) for x in self.payload])
 
 
 class IDMaskFilter(object):
@@ -54,6 +54,6 @@ class IDMaskFilter(object):
             return False
 
 
-
-
-
+class CANTimeoutWarning(UserWarning):
+    def __unicode__(self):
+        return "Warning: pyCAN Timeout Detected"

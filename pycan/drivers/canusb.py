@@ -16,18 +16,18 @@ Driver Requirements:
     * FTDI D2XX Driver / Support
         - See http://www.can232.com/docs/canusb_drinst_d2xx.pdf
 """
-
+import time
+import sys
 import threading
 import Queue
 import basedriver
-from common import CANMessage
+from pycan.common import CANMessage
 import serial
 
-QUEUE_DELAY = 1
-
-
+QUEUE_DELAY = .1
 CAN_TX_TIMEOUT = 100  # ms
 CAN_RX_TIMEOUT = 100  # ms
+MAX_BUFFER_SIZE = 1000
 COMMAND_TIMEOUT = 1.0  # seconds
 TERMINATORS = ['\r', '\x07']
 STD_MSG_HEADERS = ['t', 'T']
@@ -49,15 +49,13 @@ CLOSE_CMD = 'C\r'
 TIME_STAMP_CMD = 'Z1\r'
 
 
-class CANUSB(basedriver.BaseDriver):
+class CANUSB(basedriver.BaseDriverAPI):
     def __init__(self, **kwargs):
-        # Init the base driver
-        super(CANUSB, self).__init__(max_in=500, max_out=500, loopback=False)
-
         # Open the COM port
         port = kwargs['com_port']  # Throws key error
-        baud = kwargs.get('com_baud', 115200)
-        self.port = serial.Serial(port=port, baudrate=baud, timeout=1)
+        baud = int(kwargs.get('com_baud', 115200))
+        self.port = serial.Serial(port=port, baudrate=baud, timeout=0.001, writeTimeout=5)
+        self.port.flushInput()
         self.rx_buffer = ''
         self.response = ''
 
@@ -78,10 +76,25 @@ class CANUSB(basedriver.BaseDriver):
         # Go on bus
         self.bus_on()
 
+        # Build the inbound and output buffers
+        self.inbound = Queue.Queue(MAX_BUFFER_SIZE)
+        self.inbound_count = 0
+        self.outbound = Queue.Queue(MAX_BUFFER_SIZE)
+        self.outbound_count = 0
+
+        # Tell python to check for signals less often (default 1000)
+        #   - This yeilds better threading performance for timing
+        #     accuracy
+        sys.setcheckinterval(10000)
+
         self._running = threading.Event()
         self._running.set()
         self.ob_t = self.start_daemon(self.__process_outbound_queue)
         self.ib_t = self.start_daemon(self.__process_inbound_queue)
+
+    def shutdown(self):
+        self._running.clear()
+        time.sleep(1)
 
     def bus_on(self):
         return self.__send_command(OPEN_CMD)
@@ -89,12 +102,45 @@ class CANUSB(basedriver.BaseDriver):
     def bus_off(self):
         return self.__send_command(CLOSE_CMD)
 
+    def send(self, message):
+        while 1:
+            try:
+                self.outbound.put(message, timeout=QUEUE_DELAY)
+                self.outbound_count += 1
+                return True
+            except Queue.Full:
+                pass
+
+    def next_message(self, timeout=None):
+        if timeout is not None:
+            stop = time.time() + timeout
+        while 1:
+            if timeout is not None:
+                if time.time() > stop:
+                    return None
+            try:
+                new_msg = self.inbound.get(timeout=QUEUE_DELAY)
+                self.inbound_count += 1
+                return new_msg
+            except Queue.Empty:
+                pass
+
+    def life_time_sent(self):
+        return self.outbound_count
+
+    def life_time_received(self):
+        return self.inbound_count
+
     def __send_command(self, cmd, timeout=COMMAND_TIMEOUT):
         # Due to the CANUSB driver not sending confirmation during moderate
         # bus loads, waiting for any amount of will likely be useless.
 
         # Send the command
-        bytes_sent = self.port.write(cmd)
+        try:
+            bytes_sent = self.port.write(cmd)
+        except serial.SerialTimeoutException:
+            pass
+
         return (bytes_sent == len(cmd))
 
     def update_bus_parameters(self, **kwargs):
@@ -138,8 +184,11 @@ class CANUSB(basedriver.BaseDriver):
             bytes_to_read = self.port.inWaiting()
             if bytes_to_read > 0:
                 self.rx_buffer += self.port.read(bytes_to_read)
+            elif self.rx_buffer != '':
+                pass # There is buffered data to process
             else:
-                # Read one: this uses the serial port timeout for throttling
+                # There is no pending data - use the serial port to
+                # throttle the thread
                 self.rx_buffer += self.port.read()
 
             msg = ''
@@ -199,6 +248,9 @@ class CANUSB(basedriver.BaseDriver):
                     except IndexError:
                         # TODO (A. Lewis) Log the bad message from the comport
                         # Chuck partial messages
+                        pass
+                    except ValueError:
+                        # Chuck malformed messages
                         pass
 
                 elif hdr in REM_MSG_HEADERS:

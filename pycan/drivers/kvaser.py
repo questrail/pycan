@@ -16,23 +16,21 @@ Hardware Requirements:
 Driver Requirements:
     * See Kvaser's website for the latest
 """
-
+import sys
 import Queue
 import threading
 import basedriver
-from common import CANMessage
+from pycan.common import CANMessage
 from ctypes import *
 
 CAN_TX_TIMEOUT = 100  # ms
 CAN_RX_TIMEOUT = 100  # ms
+MAX_BUFFER_SIZE = 1000
 QUEUE_DELAY = 1  # second
 
 
-class Kvaser(basedriver.BaseDriver):
+class Kvaser(basedriver.BaseDriverAPI):
     def __init__(self, **kwargs):
-        # Init the base driver
-        super(Kvaser, self).__init__(max_in=500, max_out=500, loopback=False)
-
         # Init the Leaf Light HS DLL
         windll.canlib32.canInitializeLibrary()
 
@@ -47,6 +45,17 @@ class Kvaser(basedriver.BaseDriver):
 
         # Set the default paramters
         self.update_bus_parameters()
+
+        # Build the inbound and output buffers
+        self.inbound = Queue.Queue(MAX_BUFFER_SIZE)
+        self.inbound_count = 0
+        self.outbound = Queue.Queue(MAX_BUFFER_SIZE)
+        self.outbound_count = 0
+
+        # Tell python to check for signals less often (default 1000)
+        #   - This yeilds better threading performance for timing
+        #     accuracy
+        sys.setcheckinterval(10000)
 
         self._running = threading.Event()
         self._running.set()
@@ -63,6 +72,36 @@ class Kvaser(basedriver.BaseDriver):
                                         c_uint(kwargs.get("sjw", 2)),
                                         c_uint(kwargs.get("sample_count", 1)),
                                         c_uint(0))
+
+    def send(self, message):
+        while 1:
+            try:
+                self.outbound.put(message, timeout=QUEUE_DELAY)
+                self.outbound_count += 1
+                return True
+            except Queue.Full:
+                pass
+
+    def next_message(self, timeout=None):
+        if timeout is not None:
+            stop = time.time() + timeout
+        while 1:
+            try:
+                new_msg = self.inbound.get(timeout=QUEUE_DELAY)
+                self.inbound_count += 1
+                return new_msg
+            except Queue.Empty:
+                pass
+
+            if timeout is not None:
+                if time.time() > stop:
+                    return None
+
+    def life_time_sent(self):
+        return self.outbound_count
+
+    def life_time_received(self):
+        return self.inbound_count
 
     def __process_outbound_queue(self):
         while self._running.is_set():
@@ -103,10 +142,9 @@ class Kvaser(basedriver.BaseDriver):
                                                  pointer(rx_flags),
                                                  pointer(rx_time),
                                                  c_uint32(CAN_RX_TIMEOUT))
-
             if status < 0:
                 pass
-                #TODO: Flag error
+                #TODO: Flag errors
 
             else:
                 # Determine if it is 11bit or 29bit

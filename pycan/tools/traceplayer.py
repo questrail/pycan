@@ -71,7 +71,7 @@ class TracePlayer(object):
     def __file_player(self):
         while not self.shutdown.is_set():
             # Protect CPU against missing files / stopped state
-            time.sleep(1)
+            time.sleep(.5)
 
             # Do not even try to load the files if we are stopped
             if not self.playing.is_set():
