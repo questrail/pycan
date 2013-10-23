@@ -4,10 +4,9 @@
 # Use of this source code is governed by a MIT-style license that
 # can be found in the LICENSE.txt file for the project.
 import os
-import time
-import threading
+import random
 import unittest
-import pycan.sim_can
+import pycan.drivers.sim_can as driver
 from pycan.common import CANMessage
 
 class SimCANTests(unittest.TestCase):
@@ -26,7 +25,7 @@ class SimCANTests(unittest.TestCase):
             self.fail(msg="PEP8 not installed.")
 
         # Check the CAN driver
-        driver_path = os.path.dirname(pycan.sim_can.__file__)
+        driver_path = os.path.dirname(driver.__file__)
         driver_file = os.path.abspath(os.path.join(driver_path, 'sim_can.py'))
         pep8_checker = pep8.Checker(driver_file)
         violation_count = pep8_checker.check_all()
@@ -35,59 +34,34 @@ class SimCANTests(unittest.TestCase):
 
     def testDriver(self):
         # Setup the driver
-        self.driver = pycan.sim_can.SimCAN(verbose=False)
+        self.driver = driver.SimCAN(verbose=False)
 
         # Run the driver specific tests if and only if the driver was setup
         self.Transmit()
-        self.CyclicTransmit()
-        self.GenericReceive()
+        self.Receive()
 
     def Transmit(self):
+        messages_to_send = int(random.random() * 1000) + 1
+
         msg1 = CANMessage(0x123456, [1,2,3])
-        self.assertTrue(self.driver.send(msg1))
-        self.assertEqual(self.driver.total_outbound_count, 1)
+        for x in range(messages_to_send):
+            msg = "Failed to send message {x}".format(x=x)
+            self.assertTrue(self.driver.send(msg1), msg)
 
-    def CyclicTransmit(self):
-        msg1 = CANMessage(0x123456, [1,2,3])
-        msg2 = CANMessage(0x123456, [5,6,7,8])
+        self.assertEqual(self.driver.life_time_sent(), messages_to_send)
 
-        # Turn on verbose to make sure we see the messages
-        self.driver.verbose = True
-        self.assertTrue(self.driver.add_cyclic_message(msg1, .1, "Sample"))
-        # Watch the CAN bus (screen) to ensure the messages are being sent
-        time.sleep(3)
-        self.assertTrue(self.driver.update_cyclic_message(msg2, "Sample"))
-        # Watch the CAN bus (screen) to ensure the message change happened
-        time.sleep(3)
+    def Receive(self):
+        messages_to_receive = int(random.random() * 100) + 1
 
-    def GenericReceive(self):
-        expected = 10
-        events = []
-        for x in range(expected):
-            events.append(threading.Event())
-            events[-1].clear()
+        # Check that the life time received hasn't been updated yet
+        self.assertEqual(self.driver.life_time_received(), 0)
 
-        def gen_handler(msg):
-            # Walk down the number of events marking them as
-            # each new message is received
-            for event in events:
-                if not event.isSet():
-                    event.set()
-                    print msg
-                    break;
-
-        self.driver.add_receive_handler(gen_handler)
-
-        # wait for at least 1 second for each message
-        for event in events:
-            event.wait(1)
-
-        # Determine how many messages were in fact recorded
-        actual = 0
-        for event in events:
-            msg="Expected %d, receved %d" % (expected, actual)
-            self.assertTrue(event.isSet(), msg)
-            actual += 1
+        # Read back the random number of messages and check that the lifetime
+        # values track the next_message call
+        read_messages = 0
+        for x in range(messages_to_receive):
+            if self.driver.next_message():
+                self.assertEqual((x+1), self.driver.life_time_received())
 
 
 if __name__ == '__main__':

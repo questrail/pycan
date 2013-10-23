@@ -1,10 +1,10 @@
 from distutils.core import setup
 setup(
-    name='pycan',
+    name='pyCAN',
     version='0.1',
     author='Adam Lewis',
     author_email='adam.lewis@questrail.com',
-    py_modules=['pycan'],
+    packages=['pycan','pycan.tools', 'pycan.tools.parsers', 'pycan.drivers'],
     url='http://github.com/questrail/pycan',
     license='LICENSE.txt',
     description='Generic Python Controller Area Network (CAN) driver abstraction.',
