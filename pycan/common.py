@@ -14,16 +14,27 @@ class CANMessage(object):
         extended: A boolean indicating if the message is a 29 bit message
         ts: An integer representing the time stamp
     """
-    def __init__(self, id, payload, extended=True, ts=0):
+    TS_SECONDS = 1.0
+    TS_MILLI_SEC = 1.0e3
+    TS_MICRO_SEC = 1.0e6
+    def __init__(self, id, payload, extended=True, ts=0, scale=TS_MICRO_SEC):
         """Inits CANMesagge."""
         self.id = id
         self.dlc = len(payload)
         self.payload = payload
         self.extended = extended
         self.time_stamp = ts
+        self.time_scale = scale
 
     def __str__(self):
-        return "%s,%d : %s" % (hex(self.id), self.dlc, [hex(x) for x in self.payload])
+        data = ''
+        for d in self.payload:
+            data += "{0},".format(d)
+        try:
+            return "%s,%d : %s %d" % (hex(self.id), self.dlc, data, self.time_stamp)
+        except TypeError:
+            return "%s,%d : %s %d" % (self.id, self.dlc, data, self.time_stamp)
+
 
 
 class IDMaskFilter(object):
@@ -42,15 +53,21 @@ class IDMaskFilter(object):
 
     def filter_match(self, msg):
         """Tests if the given CAN message should pass through the filter"""
+        if not msg:
+            return False
+
         # Check the extended bit
         if msg.extended != self.extended:
             return False
 
         # Check the mask / code combo
         target = self.mask & self.code
-        if (msg.id & self.mask) == target:
-            return True
-        else:
+        try:
+            if (msg.id & self.mask) == target:
+                return True
+            else:
+                return False
+        except ValueError:
             return False
 
 

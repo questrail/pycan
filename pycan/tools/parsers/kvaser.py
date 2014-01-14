@@ -3,9 +3,9 @@
 # Project site: https://github.com/questrail/pycan
 # Use of this source code is governed by a MIT-style license that
 # can be found in the LICENSE.txt file for the project.
-"""CANalyzer ASC File / Line Parser
+"""Kvaser Log File / Line Parser
 
-Module used to parse ASC files and conforms to the trace player's
+Module used to parse Kvaser log files and conforms to the trace player's
 API requirements.
 """
 import os
@@ -14,14 +14,15 @@ import threading
 
 from pycan.common import CANMessage
 
-DIRTY_WORDS = ['Statistic:', 'date', 'base', 'events', 'version', 'Begin']
-ABS = 'absolute'
-DELTA = 'deltas'
 MIN_DELAY = 0
 
+# TODO:
+#   1) Add ability to determine formatting by reading N lines
+#       - Hex vs Dec, J1939 vs Std, Time deltas etc...
 
-class ASCParser(object):
-    def __init__(self, asc_file='', include_filters=None, exclude_filters=None):
+
+class KvaserParser(object):
+    def __init__(self, file_path='', include_filters=None, exclude_filters=None):
         self.include_filters = include_filters if include_filters else []
         self.exclude_filters = exclude_filters if exclude_filters else []
         self.last_ts = None
@@ -29,19 +30,19 @@ class ASCParser(object):
         self.next_message = None
         self.trace_fid = None
 
-        if self.__valid_file(asc_file):
-            self.trace_file = asc_file
+        if self.__valid_file(file_path):
+            self.trace_file = file_path
         else:
             self.trace_file = None
 
-        self.settings = {}
-        self.settings['timestamps'] = ABS
-        self.settings['base'] = 10
+        #self.settings = {}
+        #self.settings['timestamps'] = ABS
+        #self.settings['base'] = 10
 
     def __valid_file(self, file_path):
         if os.path.isfile(file_path):
             fileName, fileExt = os.path.splitext(file_path)
-            if fileExt == '.asc':
+            if fileExt == '.txt':
                 return True
 
         return False
@@ -88,43 +89,37 @@ class ASCParser(object):
         # Split the line prior to parsing
         split_line = line.strip(' ').split(' ')
 
-        # Check for ASC settings
-        self.__lookup_asc_settings(split_line)
-
-        # Check to see if the line is a valid line
-        for word in DIRTY_WORDS:
-            if word in split_line:
-                return self.next_message
-
         # Check that the line has all the common line items
         if len(split_line) < 5:
             return self.next_message
 
         # Determine and remove the common line items
-        ts = float(split_line.pop(0))
         chan = split_line.pop(0).strip(' ')
         can_id = split_line.pop(0).strip(' ')
-        direction = split_line.pop(0).strip(' ')
-        rd_flag = split_line.pop(0).strip(' ')
+        nxt = split_line.pop(0).strip(' ')
 
         # Build valid messages
-        if rd_flag is 'd':
+        if nxt == 'X':
+            # Built an extended message
+            ext = True
+
             # Extract the payload
             dlc = int(split_line.pop(0))
 
             payload = []
             for b in range(dlc):
-                payload.append(int(split_line.pop(0), self.settings['base']))
+                payload.append(int(split_line.pop(0), 16))
 
-            # Build the can message and extended flag
-            if can_id[-1] is 'x':
-                can_id = can_id[:-1]
-                ext = True
-            else:
-                ext = False
+            # Extract the timestamp(uSec) and direction
+            ts = float(split_line.pop(0))
+            direction = split_line.pop(0)
+
+            if direction == "T":
+                # Kick out transmitted messages
+                return self.next_message
 
             try:
-                can_id = int(can_id, self.settings['base'])
+                can_id = int(can_id, 16)
             except ValueError:
                 # Just use the string value in the case of a label
                 pass
@@ -132,8 +127,32 @@ class ASCParser(object):
             # Build the real CAN message
             msg = CANMessage(can_id, payload, ext)
 
-        elif can_id == "ErrorFrame":
+        elif nxt >= "0" and nxt <= "8":
+            # build the standard message
+            ext = False
+
+            # Extract the payload
+            dlc = int(nxt)
+
+            payload = []
+            for b in range(dlc):
+                payload.append(int(split_line.pop(0), 16))
+
+            # Extract the timestamp(uSec) and direction
+            ts = float(split_line.pop(0))
+            direction = split_line.pop(0)
+
+            if direction == "T":
+                # Kick out transmitted messages
+                return self.next_message
+
+            # Build the real CAN message
+            msg = CANMessage(can_id, payload, ext)
+
+
+        elif nxt == "ErrorFrame":
             msg = CANMessage(-1, [], False)
+            ts = float(split_line.pop(0).strip(' '))
 
         else:
             msg = None
@@ -164,15 +183,15 @@ class ASCParser(object):
     def __determine_time_stamp(self, ts):
 
         if self.last_ts is None:
-            stamp = 0
-        elif self.settings['timestamps'] == DELTA:
-            stamp = (ts + self.last_ts)
+            stamp = ts
+        #elif self.settings['timestamps'] == DELTA:
+        #    stamp = (ts + self.last_ts)
         else:
             stamp = ts
 
         self.last_ts = ts
 
-        new_us_tick = stamp * 1e6
+        new_us_tick = stamp * 1.0e6
 
         # Make sure no messages are at the exact same time
         if new_us_tick == self.micro_second_tick:

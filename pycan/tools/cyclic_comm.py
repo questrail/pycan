@@ -136,4 +136,3 @@ class CyclicComm(object):
                 if new_msg.id == can_id or can_id is None:
                     if new_msg.extended == ext:
                         handler(new_msg)
-

@@ -5,7 +5,10 @@
 # can be found in the LICENSE.txt file for the project.
 import os
 import unittest
-from pycan.basedriver import *
+import time
+import threading
+from pycan.drivers.sim_can import SimCAN
+from pycan.tools.cyclic_comm import CyclicComm
 from pycan.common import CANMessage
 
 def measure_performance(driver, rate, run_time=3.0):
@@ -13,24 +16,30 @@ def measure_performance(driver, rate, run_time=3.0):
     tic = time.time()
     t_stats = []
     obc = 0
-    while driver.total_outbound_count < expected_counts:
-        if obc != driver.total_outbound_count:
+    while driver.life_time_sent() < expected_counts:
+        if obc != driver.life_time_sent():
             toc = time.time()
             t_stats.append(toc - tic)
             tic = toc
-            obc = driver.total_outbound_count
+            obc = driver.life_time_sent()
 
     ret = (max(t_stats)*1000.0, min(t_stats)*1000.0, (sum(t_stats) / float(len(t_stats))) * 1000.0)
     print "\nTarget:%1.1f (ms)\nMax %1.1f\nMin %1.1f\nAvg %1.1f" % (rate*1000.0, ret[0], ret[1], ret[2])
     return ret
 
-class CANDriverTests(unittest.TestCase):
+class CyclicCommTests(unittest.TestCase):
     def setUp(self):
         self.driver = None
+        self.cyc = None
 
     def tearDown(self):
         try:
             self.driver.shutdown()
+            time.sleep(1)
+        except:
+            pass
+        try:
+            self.cyc.shutdown()
             time.sleep(1)
         except:
             pass
@@ -43,74 +52,38 @@ class CANDriverTests(unittest.TestCase):
             self.fail(msg="PEP8 not installed.")
 
         # Check the CAN driver
-        basedriver = os.path.abspath('pycan/basedriver.py')
-        pep8_checker = pep8.Checker(basedriver)
+        source_file = os.path.abspath('pycan/tools/cyclic_comm.py')
+        pep8_checker = pep8.Checker(source_file)
         violation_count = pep8_checker.check_all()
         error_message = "PEP8 violations found: %d" % (violation_count)
         self.assertTrue(violation_count == 0, msg = error_message)
 
 
     def testAddReceiveHandler(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
 
         def test_handler(message):
             pass
 
-        self.assertTrue(self.driver.add_receive_handler(test_handler),
+        self.assertTrue(self.cyc.add_receive_handler(test_handler),
                         msg="Unable to add a generic handler")
 
         can_id = 0x12345
-        self.assertTrue(self.driver.add_receive_handler(test_handler, can_id),
+        self.assertTrue(self.cyc.add_receive_handler(test_handler, can_id),
                         msg="Unable to add an ID specific handler")
 
         can_id_2 = 0x123456
-        self.assertTrue(self.driver.add_receive_handler(test_handler, can_id_2),
+        self.assertTrue(self.cyc.add_receive_handler(test_handler, can_id_2),
                     msg="Unable to add multiple specific handlers")
 
-    def testMessageQueues(self):
-        self.driver = BaseDriver(max_in=2, max_out=2, loopback=False)
-
-        msg1 = CANMessage(0x123, [1,2])
-        msg2 = CANMessage(0x1234, [1,2,3])
-
-        self.assertTrue(self.driver.send(msg1))
-        self.assertTrue(self.driver.send(msg2))
-        time.sleep(.5)  # Allow time for the queue to be processed
-        self.assertTrue(self.driver.total_outbound_count == 2, msg="Message not added to outbound queue")
-        self.assertTrue(self.driver.total_inbound_count == 0, msg="Loopback placed a message in the queue" )
-
-        self.assertFalse(self.driver.send(msg1), msg="Max outbound queue size not honored")
-        time.sleep(.5)  # Allow time for the queue to be processed
-        self.assertTrue(self.driver.total_outbound_count == 2, msg="Max outbound queue size not honored")
-        self.assertTrue(self.driver.total_inbound_count == 0, msg="Loopback placed a message in the queue" )
-
-    def testMessageLoopback(self):
-        self.driver = BaseDriver(max_in=5, max_out=2, loopback=True)
-
-        msg1 = CANMessage(0x123, [1,2])
-        msg2 = CANMessage(0x1234, [1,2,3])
-
-        self.assertTrue(self.driver.send(msg1))
-        self.assertTrue(self.driver.send(msg2))
-        self.assertTrue(self.driver.total_outbound_count == 2,
-                        msg="Message not added to outbound queue")
-
-        time.sleep(.5)  # Allow time for the queue to be processed
-
-        self.assertTrue(self.driver.total_inbound_count == 2,
-                        msg="Loopback didn't add message to inbound: %d" %self.driver.total_inbound_count )
-
-        self.assertFalse(self.driver.send(msg1))
-        self.assertTrue(self.driver.total_outbound_count == 2,
-                        msg="Max outbound queue size not honored")
-
-        time.sleep(.5)  # Allow time for the queue to be processed
-
-        self.assertTrue(self.driver.total_inbound_count == 2,
-                        msg="Loopback still placed the message in the outbound: %d" % self.driver.total_inbound_count)
+        can_id_3 = 0x123456
+        self.assertTrue(self.cyc.add_receive_handler(test_handler, can_id_2, False),
+                    msg="Unable to add multiple specific handlers")
 
     def testReceiveHandlers(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
 
         msg1 = CANMessage(0x123, [1,2])
         msg2 = CANMessage(0x1234, [1,2,3])
@@ -152,10 +125,10 @@ class CANDriverTests(unittest.TestCase):
                 gen_event3.set()
 
         # Add the handlers
-        self.driver.add_receive_handler(msg1_handler, msg1.id)
-        self.driver.add_receive_handler(msg2_handler, msg2.id)
-        self.driver.add_receive_handler(msg3_handler, msg3.id)
-        self.driver.add_receive_handler(gen_handler)
+        self.cyc.add_receive_handler(msg1_handler, msg1.id)
+        self.cyc.add_receive_handler(msg2_handler, msg2.id)
+        self.cyc.add_receive_handler(msg3_handler, msg3.id)
+        self.cyc.add_receive_handler(gen_handler)
 
         # Force messages in the inbound queue
         self.driver.inbound.put(msg1)
@@ -176,37 +149,42 @@ class CANDriverTests(unittest.TestCase):
         self.assertTrue(gen_event3.isSet(), msg="Message 3 generic handler failed")
 
     def testCyclicPerformance_1000ms(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-        self.__performance_test(self.driver, 1, 5.0, [1.75, 1.00, 1.5])
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
+        self.__performance_test(self.cyc, 1, 5.0, [1.75, 1.00, 1.5])
 
     def testCyclicPerformance_100ms(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-        self.__performance_test(self.driver, .1, 5.0, [1.00, .1, .175])
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
+        self.__performance_test(self.cyc, .1, 5.0, [1.00, .1, .175])
 
     def testCyclicPerformance_10ms(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
-        self.__performance_test(self.driver, .01, 5.0, [.5, .01, .075])
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
+        self.__performance_test(self.cyc, .01, 5.0, [.5, .01, .075])
 
 
     def testCyclicAdd(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=False)
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
 
         msg1 = CANMessage(1, [1])
         msg2 = CANMessage(2, [1,2])
 
         # Add and start some cyclic messages
-        self.assertTrue(self.driver.add_cyclic_message(msg1, .1), msg="Unable to add cyclic message")
-        self.assertTrue(self.driver.add_cyclic_message(msg2, .1, "ETC2"), msg="Unable to add cyclic message")
+        self.assertTrue(self.cyc.add_cyclic_message(msg1, .1), msg="Unable to add cyclic message")
+        self.assertTrue(self.cyc.add_cyclic_message(msg2, .1, "ETC2"), msg="Unable to add cyclic message")
 
         time.sleep(1) # allow time for the cyclic messages to send
-        qsize = self.driver.total_outbound_count
+        qsize = self.driver.life_time_sent()
         self.assertTrue(qsize > 10, msg="Q Size: %d" % qsize)
 
-        self.assertTrue(self.driver.stop_cyclic_message(msg1.id), msg="Unable to stop cyclic message")
-        self.assertTrue(self.driver.stop_cyclic_message("ETC2"), msg="Unable to stop cyclic message")
+        self.assertTrue(self.cyc.stop_cyclic_message(msg1.id), msg="Unable to stop cyclic message")
+        self.assertTrue(self.cyc.stop_cyclic_message("ETC2"), msg="Unable to stop cyclic message")
 
     def testCyclicOperation(self):
-        self.driver = BaseDriver(max_in=500, max_out=500, loopback=True)
+        self.driver = SimCAN(max_in=500, max_out=500, loopback=False)
+        self.cyc = CyclicComm(self.driver)
 
         msg1_evt = threading.Event()
         msg1_evt.clear()

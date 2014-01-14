@@ -54,7 +54,8 @@ class CANUSB(basedriver.BaseDriverAPI):
         # Open the COM port
         port = kwargs['com_port']  # Throws key error
         baud = int(kwargs.get('com_baud', 115200))
-        self.port = serial.Serial(port=port, baudrate=baud, timeout=0.001, writeTimeout=5)
+        self.port = serial.Serial(port=port, baudrate=baud,
+                                  timeout=0.001, writeTimeout=5)
         self.port.flushInput()
         self.rx_buffer = ''
         self.response = ''
@@ -185,7 +186,7 @@ class CANUSB(basedriver.BaseDriverAPI):
             if bytes_to_read > 0:
                 self.rx_buffer += self.port.read(bytes_to_read)
             elif self.rx_buffer != '':
-                pass # There is buffered data to process
+                pass  # There is buffered data to process
             else:
                 # There is no pending data - use the serial port to
                 # throttle the thread

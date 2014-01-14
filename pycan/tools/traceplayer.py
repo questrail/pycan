@@ -9,6 +9,7 @@ Module used to play back a given CAN file logged using various
 off the shelf tools or pycan's logging module
 """
 import time
+import sys
 import threading
 
 
@@ -17,10 +18,13 @@ class TracePlayer(object):
     STOPPED = "Stopped"
     PAUSED = "Paused"
 
-    def __init__(self, driver, parser, files=[]):
+    def __init__(self, driver, parser, files=[], use_wall_time=True):
+        self.use_wall_time = use_wall_time
         self.driver = driver
         self.parser = parser
         self.next_message = None
+        self.last_stamp = 0
+        self.play_time = 0
         self.files = files
         self.playing = threading.Event()
         self.paused = threading.Event()
@@ -87,7 +91,8 @@ class TracePlayer(object):
                     # Load the file using buffered IO to protect against
                     # large files
                     try:
-                        with open(f, 'r') as fid:
+                        with open(f, 'rb') as fid:
+                            print("Playing File: {0}".format(f))
                             for line in fid:
                                 # Support real time pausing
                                 while self.paused.is_set():
@@ -100,6 +105,7 @@ class TracePlayer(object):
                                 else:
                                     # Bail out
                                     break
+                            print("\n")
                     except IOError:
                         # TODO: Useing logging
                         print "Error running file: {f}".format(f=f)
@@ -111,9 +117,25 @@ class TracePlayer(object):
 
         # Send the next available message
         if self.next_message:
+            self.__print_elapsed_time(self.next_message.time_stamp)
             # Keep trying to send the message (do not throw any away)
             while(not self.driver.send(self.next_message)):
                 time.sleep(.001)
 
+            self.last_stamp = self.next_message.time_stamp
+
         # Parse the line and wait
         self.next_message = self.parser.parse_line(line)
+        if self.use_wall_time and self.next_message:
+            if self.last_stamp:
+                delay = (self.next_message.time_stamp - self.last_stamp) / 1.0e6
+                if delay < 3.0:
+                    time.sleep(delay)
+                else:
+                    print("Skipping {0} second delay".format(delay))
+
+    def __print_elapsed_time(self, stamp):
+        sec = stamp / 1.0e6
+        sys.stdout.write("\r\tElapsed Time (seconds): {0:1.3f}".format(sec))
+        sys.stdout.flush()
+
