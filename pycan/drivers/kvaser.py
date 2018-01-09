@@ -20,6 +20,7 @@ import sys
 import Queue
 import threading
 import basedriver
+import time
 from pycan.common import CANMessage
 from ctypes import *
 
@@ -72,6 +73,10 @@ class Kvaser(basedriver.BaseDriverAPI):
                                         c_uint(kwargs.get("sjw", 2)),
                                         c_uint(kwargs.get("sample_count", 1)),
                                         c_uint(0))
+    def shutdown(self):
+        self._running.clear()
+        time.sleep(1)
+        sys.exit()
 
     def send(self, message):
         while 1:
@@ -157,7 +162,7 @@ class Kvaser(basedriver.BaseDriverAPI):
 
                 if rx_ext is not None:
                     # Build the message
-                    new_msg = CANMessage(rx_id.value, rx_msg)
+                    new_msg = CANMessage(rx_id.value, rx_msg, rx_ext)
 
                     try:
                         self.inbound.put(new_msg, timeout=QUEUE_DELAY)
